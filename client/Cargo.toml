@@ -1,0 +1,63 @@
+[package]
+name = "ghostlink-client"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+# Networking and async
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+
+# Configuration and CLI
+config.workspace = true
+clap.workspace = true
+
+# Logging and error handling
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Time handling
+chrono.workspace = true
+
+# Cross-platform system info
+sysinfo = "0.30"
+hostname = "0.3"
+
+# Image processing and encoding
+png = "0.17"
+
+# Additional networking
+url = "2.0"
+
+# Async traits
+async-trait = "0.1"
+
+# Configuration
+toml = "0.8"
+
+# Screen capture and input simulation (platform-specific)
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Threading",
+    "Win32_Security",
+] }
+
+[target.'cfg(unix)'.dependencies]
+x11 = { version = "2.21", optional = true }
+xcb = { version = "1.4", optional = true }
+
+[features]
+default = []
+x11 = ["dep:x11"]
+wayland = ["dep:xcb"]

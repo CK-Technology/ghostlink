@@ -1,0 +1,36 @@
+# GhostLink Server Configuration
+# Copy this file to config.toml and customize for your environment
+
+[server]
+host = "127.0.0.1"
+port = 8080
+static_files_dir = "./web"
+max_connections = 10000
+
+[database]
+url = "postgresql://ghostlink:password@localhost/ghostlink"
+max_connections = 20
+min_connections = 5
+
+[security]
+jwt_secret = "your-super-secret-jwt-key-change-in-production"
+session_timeout_minutes = 480  # 8 hours
+max_failed_attempts = 5
+enable_mfa = true
+
+# Uncomment for TLS termination at the server level
+# [security.tls]
+# cert_path = "/path/to/certificate.pem"
+# key_path = "/path/to/private.key"
+# require_client_cert = false
+
+[relay]
+max_relay_connections = 1000
+connection_timeout_seconds = 300
+heartbeat_interval_seconds = 30
+# max_bandwidth_mbps = 100  # Uncomment to set bandwidth limit
+
+[logging]
+level = "info"
+json_format = false
+audit_log_enabled = true

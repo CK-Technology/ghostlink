@@ -1,0 +1,72 @@
+[package]
+name = "ghostlink-server"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+# Frontend framework
+leptos.workspace = true
+leptos_axum.workspace = true
+leptos_meta.workspace = true
+leptos_router.workspace = true
+wasm-bindgen.workspace = true
+
+# Web framework and async runtime
+tokio.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+hyper.workspace = true
+
+# WebSocket and networking
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+
+# Database and authentication
+sqlx.workspace = true
+argon2.workspace = true
+jsonwebtoken.workspace = true
+
+# Crypto and security
+ring.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
+
+# Logging and error handling
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Configuration
+config.workspace = true
+clap.workspace = true
+
+# Time handling
+chrono.workspace = true
+
+# Image processing for screen capture
+image.workspace = true
+
+[features]
+default = ["ssr"]
+hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate"]
+ssr = [
+    "leptos/ssr",
+    "leptos_axum/default",
+    "leptos_meta/ssr",
+    "leptos_router/ssr",
+]
+
+# Defines a size-optimized profile for the WASM bundle in release mode
+[profile.wasm-release]
+inherits = "release"
+opt-level = 'z'
+lto = true
+codegen-units = 1
+panic = "abort"
