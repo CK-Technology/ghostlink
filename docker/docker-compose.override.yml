@@ -1,0 +1,74 @@
+# Docker Compose Override for Development
+# This file provides development-friendly overrides to the main docker-compose.yml
+# Use: docker-compose -f docker-compose.yml -f docker-compose.override.yml up
+
+version: '3.8'
+
+services:
+  # Development overrides for GhostLink server
+  ghostlink:
+    # Use local build context for faster development iteration
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: builder  # Stop at builder stage for development
+    # Override command for development with auto-reload
+    command: ["cargo", "leptos", "serve", "--reload"]
+    # Mount source code for live reloading
+    volumes:
+      - ../server/src:/app/server/src:ro
+      - ../client/src:/app/client/src:ro
+      - ../shared/src:/app/shared/src:ro
+      - ../assets:/app/assets:ro
+      - ghostlink_data:/app/data
+      - ghostlink_logs:/app/logs
+      - ./config.toml:/app/config/config.toml:ro
+    # Expose additional ports for development
+    ports:
+      - "3000:3000"  # Direct access to Leptos dev server
+      - "3001:3001"  # Leptos reload websocket
+    # Development environment variables
+    environment:
+      RUST_LOG: debug
+      LEPTOS_RELOAD_PORT: 3001
+      LEPTOS_WATCH: "true"
+      CARGO_TARGET_DIR: /app/target
+      
+  # Development database with exposed port
+  postgres:
+    ports:
+      - "5432:5432"  # Expose for database tools
+    # Add development database initialization
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ./dev-data.sql:/docker-entrypoint-initdb.d/02-dev-data.sql
+      
+  # Development Redis with exposed port  
+  redis:
+    ports:
+      - "6379:6379"  # Expose for Redis tools
+      
+  # Development NGINX with local SSL certificates
+  nginx:
+    volumes:
+      - ../nginx/nginx-dev.conf:/etc/nginx/nginx.conf:ro
+      - ../nginx/sites:/etc/nginx/sites-enabled:ro
+      - ../nginx/ssl-dev:/etc/nginx/ssl:ro  # Use development SSL certificates
+      - nginx_cache:/var/cache/nginx
+      - nginx_logs:/var/log/nginx
+    environment:
+      - DOMAIN=ghostlink.local
+      - BACKEND_HOST=ghostlink
+      - BACKEND_PORT=3000
+      - SSL_VERIFY=off  # Disable SSL verification for development
+
+# Development-specific volumes
+volumes:
+  # Use named volumes for development data persistence
+  postgres_data:
+  redis_data:
+  ghostlink_data:
+  ghostlink_logs:
+  nginx_cache:
+  nginx_logs:

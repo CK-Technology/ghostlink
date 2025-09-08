@@ -260,7 +260,11 @@ impl Session {
         let capture_guard = self.screen_capture.read().await;
         let input_guard = self.input_controller.read().await;
         
-        let capture_healthy = capture_guard.as_ref().map_or(false, |c| c.is_healthy());
+        let capture_healthy = if let Some(capture) = capture_guard.as_ref() {
+            capture.is_healthy().await
+        } else {
+            false
+        };
         let input_healthy = input_guard.as_ref().map_or(false, |i| i.is_healthy());
         
         capture_healthy && input_healthy

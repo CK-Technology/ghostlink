@@ -1,322 +1,345 @@
-use anyhow::{Context, Result};
-use std::collections::HashMap;
-use std::process::Command;
+use async_trait::async_trait;
 use tracing::{debug, error, info, warn};
+use std::process::Command;
+use crate::error::{Result, CaptureError, GhostLinkError};
+use super::{Frame, PixelFormat, ScreenCapturer};
 
-use super::{Display, Frame, PixelFormat, ScreenCapturer};
-
-/// Wayland screen capture using wlr-screencopy protocol
+/// Wayland screen capturer using PipeWire and portal APIs
 pub struct WaylandCapturer {
-    displays: Vec<Display>,
-    current_display: u32,
+    session_token: Option<String>,
+    pipewire_node_id: Option<u32>,
+    width: u32,
+    height: u32,
     is_initialized: bool,
+    use_portal: bool,
 }
 
 impl WaylandCapturer {
     pub async fn new() -> Result<Self> {
+        info!("Initializing Wayland screen capturer");
+        
+        // Check if we're running under Wayland
+        let session_type = std::env::var("XDG_SESSION_TYPE").unwrap_or_default();
+        if session_type != "wayland" {
+            return Err(GhostLinkError::Capture(CaptureError::UnsupportedPlatform {
+                platform: format!("Session type: {}", session_type),
+            }));
+        }
+        
+        // Check for PipeWire support
+        let has_pipewire = Self::check_pipewire_available();
+        if !has_pipewire {
+            warn!("PipeWire not available, some features may be limited");
+        }
+        
+        // Check for xdg-desktop-portal support (for secure screen capture)
+        let has_portal = Self::check_portal_available();
+        
         Ok(Self {
-            displays: Vec::new(),
-            current_display: 0,
+            session_token: None,
+            pipewire_node_id: None,
+            width: 0,
+            height: 0,
             is_initialized: false,
+            use_portal: has_portal,
         })
     }
-
-    /// Get Wayland compositor info
-    fn get_compositor_info(&self) -> Result<String> {
-        let compositor = std::env::var("XDG_CURRENT_DESKTOP")
-            .or_else(|_| std::env::var("WAYLAND_DISPLAY"))
-            .unwrap_or_else(|_| "unknown".to_string());
-        
-        Ok(compositor)
-    }
-
-    /// Check if wlr-screencopy is available
-    fn check_screencopy_available(&self) -> Result<bool> {
-        // Try to run wl-copy to test if wl-clipboard tools are available
-        let output = Command::new("wl-copy")
+    
+    /// Check if PipeWire is available
+    fn check_pipewire_available() -> bool {
+        Command::new("pw-cli")
             .arg("--version")
-            .output();
-        
-        match output {
-            Ok(output) => Ok(output.status.success()),
-            Err(_) => {
-                // Check if grim is available (alternative screenshot tool)
-                let grim_output = Command::new("grim")
-                    .arg("--help")
-                    .output();
-                
-                Ok(grim_output.is_ok())
-            }
-        }
-    }
-
-    /// Use grim for Wayland screenshot
-    async fn capture_with_grim(&self) -> Result<Frame> {
-        let output = Command::new("grim")
-            .arg("-t")
-            .arg("ppm") // Use PPM format for easier parsing
-            .arg("-") // Output to stdout
             .output()
-            .context("Failed to execute grim")?;
-
+            .is_ok()
+    }
+    
+    /// Check if xdg-desktop-portal is available
+    fn check_portal_available() -> bool {
+        // Check for portal support via D-Bus
+        Command::new("busctl")
+            .args(&[
+                "--user",
+                "introspect",
+                "org.freedesktop.portal.Desktop",
+                "/org/freedesktop/portal/desktop"
+            ])
+            .output()
+            .is_ok()
+    }
+    
+    /// Initialize screen capture via portal (secure method)
+    async fn init_portal_capture(&mut self) -> Result<()> {
+        info!("Initializing screen capture via xdg-desktop-portal");
+        
+        // This would use D-Bus to communicate with xdg-desktop-portal
+        // For now, we'll use a simplified approach
+        
+        // Request screen cast permission
+        let output = Command::new("gdbus")
+            .args(&[
+                "call",
+                "--session",
+                "--dest", "org.freedesktop.portal.Desktop",
+                "--object-path", "/org/freedesktop/portal/desktop",
+                "--method", "org.freedesktop.portal.ScreenCast.CreateSession",
+                "{'session_handle_token': <'ghostlink_session'>, 'handle_token': <'ghostlink_handle'>}"
+            ])
+            .output()
+            .map_err(|e| GhostLinkError::Capture(CaptureError::FrameCaptureFailed {
+                reason: format!("Failed to create portal session: {}", e),
+            }))?;
+        
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("grim failed: {}", stderr));
+            let error = String::from_utf8_lossy(&output.stderr);
+            return Err(GhostLinkError::Capture(CaptureError::FrameCaptureFailed {
+                reason: format!("Portal session creation failed: {}", error),
+            }));
         }
-
-        self.parse_ppm_data(&output.stdout)
+        
+        // Parse session token from output
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        debug!("Portal session created: {}", stdout);
+        
+        // Store session token for later use
+        self.session_token = Some("ghostlink_session".to_string());
+        
+        Ok(())
     }
-
-    /// Parse PPM image data
-    fn parse_ppm_data(&self, data: &[u8]) -> Result<Frame> {
-        // PPM format: P6\nwidth height\n255\n[binary RGB data]
-        let header_end = data.windows(2).position(|w| w == b"\n\n" || w == b"\r\n")
-            .context("Could not find PPM header end")?;
+    
+    /// Initialize PipeWire capture directly (may require permissions)
+    async fn init_pipewire_direct(&mut self) -> Result<()> {
+        info!("Initializing direct PipeWire capture");
         
-        let header = std::str::from_utf8(&data[..header_end])
-            .context("Invalid PPM header")?;
+        // Get available sources using pw-cli
+        let output = Command::new("pw-cli")
+            .args(&["ls", "Node"])
+            .output()
+            .map_err(|e| GhostLinkError::Capture(CaptureError::FrameCaptureFailed {
+                reason: format!("Failed to list PipeWire nodes: {}", e),
+            }))?;
         
-        let lines: Vec<&str> = header.lines().collect();
-        if lines.len() < 3 || lines[0] != "P6" {
-            return Err(anyhow::anyhow!("Invalid PPM format"));
+        if !output.status.success() {
+            return Err(GhostLinkError::Capture(CaptureError::FrameCaptureFailed {
+                reason: "Failed to list PipeWire nodes".to_string(),
+            }));
         }
         
-        let dimensions: Vec<&str> = lines[1].split_whitespace().collect();
-        if dimensions.len() != 2 {
-            return Err(anyhow::anyhow!("Invalid PPM dimensions"));
-        }
+        let nodes = String::from_utf8_lossy(&output.stdout);
+        debug!("Available PipeWire nodes: {}", nodes);
         
-        let width: u32 = dimensions[0].parse().context("Invalid width")?;
-        let height: u32 = dimensions[1].parse().context("Invalid height")?;
+        // TODO: Parse nodes and find screen capture source
+        // For now, use a default node ID
+        self.pipewire_node_id = Some(0);
         
-        // Skip header and get RGB data
-        let rgb_data = &data[header_end + 2..];
-        
-        // Convert RGB to RGBA
-        let mut rgba_data = Vec::with_capacity((width * height * 4) as usize);
-        for chunk in rgb_data.chunks(3) {
-            if chunk.len() == 3 {
-                rgba_data.push(chunk[0]); // R
-                rgba_data.push(chunk[1]); // G
-                rgba_data.push(chunk[2]); // B
-                rgba_data.push(255);      // A
-            }
-        }
-        
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-        
-        Ok(Frame {
-            data: rgba_data,
-            width,
-            height,
-            format: PixelFormat::RGBA,
-            timestamp,
-        })
+        Ok(())
     }
-
-    /// Get display information using wlr-randr
-    async fn detect_displays(&mut self) -> Result<()> {
-        // Try wlr-randr first
-        if let Ok(output) = Command::new("wlr-randr").output() {
-            if output.status.success() {
-                return self.parse_wlr_randr_output(&output.stdout);
-            }
+    
+    /// Capture frame using grim (Wayland screenshot tool)
+    async fn capture_with_grim(&self) -> Result<Vec<u8>> {
+        // Use grim for basic screenshot capability
+        let output = Command::new("grim")
+            .args(&["-t", "png", "-"])  // Output to stdout as PNG
+            .output()
+            .map_err(|e| GhostLinkError::Capture(CaptureError::FrameCaptureFailed {
+                reason: format!("grim capture failed: {}", e),
+            }))?;
+        
+        if !output.status.success() {
+            return Err(GhostLinkError::Capture(CaptureError::FrameCaptureFailed {
+                reason: "grim capture failed".to_string(),
+            }));
         }
         
-        // Fallback: try swaymsg (for Sway compositor)
+        Ok(output.stdout)
+    }
+    
+    /// Capture frame using wlr-screencopy protocol (if available)
+    async fn capture_with_wlr_screencopy(&self) -> Result<Vec<u8>> {
+        // This would use the wlr-screencopy Wayland protocol
+        // For now, fall back to grim
+        self.capture_with_grim().await
+    }
+    
+    /// Get screen dimensions
+    async fn get_screen_info(&mut self) -> Result<()> {
+        // Try to get screen info using swaymsg (for Sway compositor)
         if let Ok(output) = Command::new("swaymsg")
-            .args(&["-t", "get_outputs"])
-            .output() {
+            .args(&["-t", "get_outputs", "-r"])
+            .output()
+        {
             if output.status.success() {
-                return self.parse_sway_outputs(&output.stdout);
-            }
-        }
-        
-        // Final fallback: create a default display
-        warn!("Could not detect Wayland displays, using default");
-        self.displays.push(Display {
-            id: 0,
-            name: "Default".to_string(),
-            width: 1920,
-            height: 1080,
-            x: 0,
-            y: 0,
-            is_primary: true,
-            scale_factor: 1.0,
-        });
-        
-        Ok(())
-    }
-
-    /// Parse wlr-randr output to get display info
-    fn parse_wlr_randr_output(&mut self, output: &[u8]) -> Result<()> {
-        let output_str = String::from_utf8_lossy(output);
-        let mut displays = Vec::new();
-        let mut current_display: Option<Display> = None;
-        let mut display_id = 0;
-        
-        for line in output_str.lines() {
-            let line = line.trim();
-            
-            if line.is_empty() {
-                if let Some(display) = current_display.take() {
-                    displays.push(display);
-                }
-                continue;
-            }
-            
-            // Look for display name (usually starts the block)
-            if !line.starts_with(" ") && line.contains("(") {
-                if let Some(display) = current_display.take() {
-                    displays.push(display);
-                }
-                
-                let name = line.split('(').next().unwrap_or("Unknown").trim();
-                current_display = Some(Display {
-                    id: display_id,
-                    name: name.to_string(),
-                    width: 1920,
-                    height: 1080,
-                    x: 0,
-                    y: 0,
-                    is_primary: display_id == 0,
-                    scale_factor: 1.0,
-                });
-                display_id += 1;
-            }
-            
-            // Parse current mode line (contains resolution)
-            if line.contains("current") && current_display.is_some() {
-                if let Some(ref mut display) = current_display {
-                    // Extract resolution from something like "1920x1080@60.000000Hz"
-                    if let Some(res_part) = line.split_whitespace().next() {
-                        if let Some((w, h)) = res_part.split_once('x') {
-                            if let (Ok(width), Ok(height)) = (w.parse::<u32>(), h.split('@').next().unwrap_or("1080").parse::<u32>()) {
-                                display.width = width;
-                                display.height = height;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        if let Some(display) = current_display {
-            displays.push(display);
-        }
-        
-        self.displays = displays;
-        info!("Detected {} Wayland displays", self.displays.len());
-        
-        Ok(())
-    }
-
-    /// Parse Sway compositor output info
-    fn parse_sway_outputs(&mut self, output: &[u8]) -> Result<()> {
-        let output_str = String::from_utf8_lossy(output);
-        
-        // Parse JSON output from swaymsg
-        if let Ok(outputs) = serde_json::from_str::<serde_json::Value>(&output_str) {
-            if let Some(outputs_array) = outputs.as_array() {
-                let mut displays = Vec::new();
-                
-                for (id, output) in outputs_array.iter().enumerate() {
-                    if let (Some(name), Some(rect)) = (output.get("name"), output.get("rect")) {
-                        let display = Display {
-                            id: id as u32,
-                            name: name.as_str().unwrap_or("Unknown").to_string(),
-                            width: rect.get("width").and_then(|v| v.as_u64()).unwrap_or(1920) as u32,
-                            height: rect.get("height").and_then(|v| v.as_u64()).unwrap_or(1080) as u32,
-                            x: rect.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
-                            y: rect.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
-                            is_primary: output.get("primary").and_then(|v| v.as_bool()).unwrap_or(id == 0),
-                            scale_factor: output.get("scale").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
-                        };
-                        displays.push(display);
-                    }
-                }
-                
-                self.displays = displays;
-                info!("Detected {} Sway displays", self.displays.len());
+                let json_str = String::from_utf8_lossy(&output.stdout);
+                // Parse JSON to get screen dimensions
+                // For now, use default values
+                self.width = 1920;
+                self.height = 1080;
+                debug!("Sway outputs: {}", json_str);
                 return Ok(());
             }
         }
         
-        Err(anyhow::anyhow!("Failed to parse Sway output information"))
+        // Try wlr-randr as fallback
+        if let Ok(output) = Command::new("wlr-randr")
+            .output()
+        {
+            if output.status.success() {
+                let info = String::from_utf8_lossy(&output.stdout);
+                // Parse output to get screen dimensions
+                // For now, use default values
+                self.width = 1920;
+                self.height = 1080;
+                debug!("wlr-randr output: {}", info);
+                return Ok(());
+            }
+        }
+        
+        // Default fallback
+        self.width = 1920;
+        self.height = 1080;
+        warn!("Could not detect screen dimensions, using defaults: {}x{}", self.width, self.height);
+        
+        Ok(())
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait]
 impl ScreenCapturer for WaylandCapturer {
     async fn initialize(&mut self) -> Result<()> {
-        info!("Initializing Wayland screen capture");
+        info!("Initializing Wayland screen capturer");
         
-        // Check if we're actually running on Wayland
-        if std::env::var("WAYLAND_DISPLAY").is_err() {
-            return Err(anyhow::anyhow!("Not running on Wayland"));
+        // Get screen information
+        self.get_screen_info().await?;
+        
+        // Try portal-based capture first (more secure)
+        if self.use_portal {
+            match self.init_portal_capture().await {
+                Ok(_) => {
+                    info!("Portal-based capture initialized successfully");
+                    self.is_initialized = true;
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!("Portal capture failed, trying direct method: {}", e);
+                }
+            }
         }
         
-        let compositor = self.get_compositor_info()?;
-        info!("Wayland compositor: {}", compositor);
-        
-        // Check if screencopy tools are available
-        if !self.check_screencopy_available()? {
-            return Err(anyhow::anyhow!(
-                "No Wayland screencopy tools found. Please install 'grim' or 'wl-clipboard'"
-            ));
+        // Try direct PipeWire capture
+        if Self::check_pipewire_available() {
+            match self.init_pipewire_direct().await {
+                Ok(_) => {
+                    info!("Direct PipeWire capture initialized successfully");
+                    self.is_initialized = true;
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!("Direct PipeWire capture failed: {}", e);
+                }
+            }
         }
         
-        // Detect available displays
-        self.detect_displays().await?;
-        
+        // Fall back to basic screenshot tools
+        info!("Using fallback screenshot-based capture method");
         self.is_initialized = true;
-        info!("Wayland capturer initialized successfully");
         
         Ok(())
     }
-
-    async fn capture_frame(&self) -> Result<Frame> {
+    
+    async fn capture_frame(&mut self) -> Result<Frame> {
         if !self.is_initialized {
-            return Err(anyhow::anyhow!("Capturer not initialized"));
+            return Err(GhostLinkError::Capture(CaptureError::NotInitialized));
         }
         
-        // For now, use grim for capture
-        self.capture_with_grim().await
-    }
-
-    async fn get_displays(&self) -> Result<Vec<Display>> {
-        Ok(self.displays.clone())
-    }
-
-    async fn set_display(&mut self, display_id: u32) -> Result<()> {
-        if display_id as usize >= self.displays.len() {
-            return Err(anyhow::anyhow!("Invalid display ID: {}", display_id));
-        }
-        
-        self.current_display = display_id;
-        info!("Set current display to: {}", display_id);
-        
-        Ok(())
-    }
-
-    fn get_resolution(&self) -> (u32, u32) {
-        if let Some(display) = self.displays.get(self.current_display as usize) {
-            (display.width, display.height)
+        // Try different capture methods in order of preference
+        let png_data = if self.session_token.is_some() {
+            // Use portal-based capture
+            // TODO: Implement actual portal frame capture
+            self.capture_with_wlr_screencopy().await?
+        } else if self.pipewire_node_id.is_some() {
+            // Use direct PipeWire capture
+            // TODO: Implement actual PipeWire frame capture
+            self.capture_with_grim().await?
         } else {
-            (1920, 1080) // Default fallback
-        }
+            // Fallback to screenshot tools
+            self.capture_with_grim().await?
+        };
+        
+        // Decode PNG to raw frame data
+        let decoder = png::Decoder::new(&png_data[..]);
+        let mut reader = decoder.read_info()
+            .map_err(|e| GhostLinkError::Capture(CaptureError::FrameCaptureFailed {
+                reason: format!("PNG decode failed: {}", e),
+            }))?;
+        
+        let mut buf = vec![0; reader.output_buffer_size()];
+        reader.next_frame(&mut buf)
+            .map_err(|e| GhostLinkError::Capture(CaptureError::FrameCaptureFailed {
+                reason: format!("PNG frame read failed: {}", e),
+            }))?;
+        
+        let info = reader.info();
+        
+        Ok(Frame {
+            data: buf,
+            width: info.width,
+            height: info.height,
+            stride: info.line_size as u32,
+            pixel_format: PixelFormat::RGBA,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64,
+        })
     }
-
-    fn is_healthy(&self) -> bool {
-        self.is_initialized && !self.displays.is_empty()
+    
+    fn get_display_info(&self) -> Vec<super::DisplayInfo> {
+        vec![super::DisplayInfo {
+            id: 0,
+            name: "Wayland Display".to_string(),
+            x: 0,
+            y: 0,
+            width: self.width,
+            height: self.height,
+            is_primary: true,
+        }]
     }
-
-    async fn cleanup(&mut self) -> Result<()> {
-        info!("Cleaning up Wayland capturer");
-        self.is_initialized = false;
+    
+    fn select_display(&mut self, _display_id: u32) -> Result<()> {
+        // Wayland typically captures all outputs
+        // Individual display selection would require portal API
         Ok(())
     }
+    
+    fn set_capture_region(&mut self, _x: i32, _y: i32, _width: u32, _height: u32) -> Result<()> {
+        // Region capture would require compositor support
+        warn!("Region capture not yet implemented for Wayland");
+        Ok(())
+    }
+    
+    fn is_healthy(&self) -> bool {
+        self.is_initialized
+    }
+}
+
+/// Helper to detect the Wayland compositor type
+pub fn detect_compositor() -> String {
+    // Check for common compositor environment variables
+    if std::env::var("SWAYSOCK").is_ok() {
+        return "sway".to_string();
+    }
+    
+    if std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok() {
+        return "hyprland".to_string();
+    }
+    
+    if std::env::var("WAYFIRE_SOCKET").is_ok() {
+        return "wayfire".to_string();
+    }
+    
+    // Check XDG_CURRENT_DESKTOP
+    if let Ok(desktop) = std::env::var("XDG_CURRENT_DESKTOP") {
+        return desktop.to_lowercase();
+    }
+    
+    "unknown".to_string()
 }

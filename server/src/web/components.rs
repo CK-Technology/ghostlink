@@ -1,5 +1,7 @@
 use leptos::*;
+use leptos_router::*;
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Device {
@@ -103,7 +105,7 @@ pub fn Sidebar() -> impl IntoView {
 
 fn launch_remote_session(device_id: String) {
     // This will trigger the native client to launch
-    log::info!("Launching remote session for device: {}", device_id);
+    info!("Launching remote session for device: {}", device_id);
     
     // In a real implementation, this would:
     // 1. Create a session token

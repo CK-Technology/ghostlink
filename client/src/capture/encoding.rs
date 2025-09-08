@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::error::{GhostLinkError, Result};
 use tracing::{info, warn};
 
 use super::{EncoderInfo, Frame, PixelFormat, VideoEncoder, VideoEncoderEnum};
@@ -66,8 +66,8 @@ impl SoftwareEncoder {
             encoder.set_color(png::ColorType::Rgba);
             encoder.set_depth(png::BitDepth::Eight);
             
-            let mut writer = encoder.write_header()?;
-            writer.write_image_data(&frame.data)?;
+            let mut writer = encoder.write_header().map_err(|e| GhostLinkError::Encode(e.to_string()))?;
+            writer.write_image_data(&frame.data).map_err(|e| GhostLinkError::Encode(e.to_string()))?;
         }
         
         Ok(png_data)
@@ -89,7 +89,7 @@ impl VideoEncoder for SoftwareEncoder {
     
     async fn encode_frame(&self, frame: &Frame) -> Result<Vec<u8>> {
         if !self.is_initialized {
-            return Err(anyhow::anyhow!("Encoder not initialized"));
+            return Err(GhostLinkError::Encode("Encoder not initialized".to_string()));
         }
         
         // For now, use PNG compression

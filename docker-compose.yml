@@ -8,46 +8,93 @@ services:
     environment:
       POSTGRES_DB: ghostlink
       POSTGRES_USER: ghostlink
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-ghostlink2024!}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
-    ports:
-      - "5432:5432"
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ghostlink"]
+      test: ["CMD-SHELL", "pg_isready -U ghostlink -d ghostlink"]
       interval: 30s
       timeout: 10s
       retries: 3
+    networks:
+      - ghostlink-backend
 
-  # GhostLink Server
+  # Redis for session storage and caching
+  redis:
+    image: redis:7-alpine
+    container_name: ghostlink-redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redis2024!}
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - ghostlink-backend
+
+  # GhostLink Server - Main Application
   ghostlink:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: ghostlink-server
     environment:
-      GHOSTLINK_DATABASE__URL: "postgresql://ghostlink:${DB_PASSWORD:-changeme}@postgres:5432/ghostlink"
-      GHOSTLINK_SERVER__HOST: "0.0.0.0"
-      GHOSTLINK_SERVER__PORT: "8080"
-      GHOSTLINK_SECURITY__JWT_SECRET: "${JWT_SECRET:-your-super-secret-jwt-key}"
-      GHOSTLINK_LOGGING__LEVEL: "${LOG_LEVEL:-info}"
+      # Core configuration
+      RUST_LOG: ${LOG_LEVEL:-info}
+      LEPTOS_SITE_ADDR: "0.0.0.0:3000"
+      
+      # Database
+      DATABASE_URL: "postgresql://ghostlink:${DB_PASSWORD:-ghostlink2024!}@postgres:5432/ghostlink"
+      REDIS_URL: "redis://default:${REDIS_PASSWORD:-redis2024!}@redis:6379"
+      
+      # Security
+      JWT_SECRET: "${JWT_SECRET:-your-super-secret-jwt-key-change-this-in-production}"
+      SESSION_SECRET: "${SESSION_SECRET:-session-secret-key-change-this}"
+      
+      # OIDC Configuration (Microsoft Entra/Azure AD)
+      OIDC_CLIENT_ID: "${OIDC_CLIENT_ID}"
+      OIDC_CLIENT_SECRET: "${OIDC_CLIENT_SECRET}"
+      OIDC_TENANT_ID: "${OIDC_TENANT_ID}"
+      OIDC_REDIRECT_URI: "https://${DOMAIN:-glink.cktechx.com}/api/auth/callback"
+      
+      # VPN Integration
+      TAILSCALE_AUTH_KEY: "${TAILSCALE_AUTH_KEY}"
+      WIREGUARD_PRIVATE_KEY: "${WIREGUARD_PRIVATE_KEY}"
+      
+      # Application settings
+      GHOSTLINK_BRAND_NAME: "${BRAND_NAME:-GhostLink Remote Access}"
+      GHOSTLINK_SUPPORT_EMAIL: "${SUPPORT_EMAIL:-support@example.com}"
     volumes:
-      - ./web:/app/web:ro
-      - ./logs:/app/logs
-      - ./config.toml:/app/config.toml:ro
-    ports:
-      - "8080:8080"
+      - ghostlink_data:/app/data
+      - ghostlink_logs:/app/logs
+      - ghostlink_toolbox:/app/toolbox/custom
+      - ./docker/config.toml:/app/config/config.toml:ro
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
-    restart: unless-stopped
+      redis:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/api/v1/status || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 60s
+    networks:
+      - ghostlink-backend
+      - ghostlink-frontend
+    # Expose for development - remove in production behind proxy
+    ports:
+      - "127.0.0.1:3000:3000"
 
-  # Nginx Reverse Proxy
+  # Nginx Reverse Proxy with OIDC and SSL termination
   nginx:
     image: nginx:1.25-alpine
     container_name: ghostlink-nginx
@@ -55,17 +102,108 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx/ghostlink.conf:/etc/nginx/conf.d/ghostlink.conf:ro
-      - ./nginx/ghostlink-common.conf:/etc/nginx/conf.d/ghostlink-common.conf:ro
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./ssl:/etc/nginx/ssl:ro  # Mount SSL certificates if using HTTPS
+      - ./nginx/sites:/etc/nginx/sites-enabled:ro
+      - /etc/nginx/certs/cktechx.com:/etc/nginx/certs/cktechx.com:ro
+      - ./nginx/auth:/etc/nginx/auth:ro
+      - nginx_cache:/var/cache/nginx
+      - nginx_logs:/var/log/nginx
+    environment:
+      - DOMAIN=${DOMAIN:-glink.cktechx.com}
+      - BACKEND_HOST=ghostlink
+      - BACKEND_PORT=3000
     depends_on:
       - ghostlink
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - ghostlink-frontend
+
+  # Tailscale sidecar for VPN integration (optional)
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: ghostlink-tailscale
+    environment:
+      - TS_AUTHKEY=${TAILSCALE_AUTH_KEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_HOSTNAME=ghostlink-server
+      - TS_SERVE_CONFIG=/config/tailscale-serve.json
+    volumes:
+      - tailscale_data:/var/lib/tailscale
+      - /dev/net/tun:/dev/net/tun
+      - ./docker/tailscale-serve.json:/config/tailscale-serve.json:ro
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv6.conf.all.forwarding=1
+    restart: unless-stopped
+    profiles:
+      - vpn
+    networks:
+      - ghostlink-frontend
+
+  # Monitoring and observability
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ghostlink-prometheus
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    networks:
+      - ghostlink-backend
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ghostlink-grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana:/etc/grafana/provisioning
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    networks:
+      - ghostlink-backend
+      - ghostlink-frontend
 
 volumes:
   postgres_data:
+  redis_data:
+  ghostlink_data:
+  ghostlink_logs:
+  ghostlink_toolbox:
+  tailscale_data:
+  nginx_cache:
+  nginx_logs:
+  prometheus_data:
+  grafana_data:
 
 networks:
-  default:
-    name: ghostlink-network
+  ghostlink-frontend:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+  ghostlink-backend:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.21.0.0/24

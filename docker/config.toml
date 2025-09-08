@@ -1,0 +1,179 @@
+# GhostLink Server Configuration for Docker Deployment
+# This configuration is designed for containerized deployment behind NGINX proxy
+
+[server]
+# Bind to all interfaces inside container
+host = "0.0.0.0"
+port = 3000
+
+# Trust proxy headers (X-Forwarded-For, X-Forwarded-Proto, etc.)
+trust_proxy = true
+proxy_protocol = false
+
+[database]
+# Database URL will be set via environment variable DATABASE_URL
+# postgresql://ghostlink:password@postgres:5432/ghostlink
+
+# Connection pool settings
+max_connections = 10
+min_connections = 1
+connect_timeout = 30
+idle_timeout = 300
+
+[redis]
+# Redis URL will be set via environment variable REDIS_URL
+# redis://default:password@redis:6379
+
+# Connection settings
+max_connections = 10
+connection_timeout = 5
+command_timeout = 30
+
+[security]
+# JWT and session secrets will be set via environment variables
+# JWT_SECRET and SESSION_SECRET
+
+# Session configuration
+session_timeout = 28800  # 8 hours
+session_name = "ghostlink_session"
+secure_cookies = true  # NGINX handles HTTPS termination
+same_site = "strict"
+
+# CORS settings for containerized deployment
+allowed_origins = ["*"]  # NGINX will handle origin filtering
+allowed_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+allowed_headers = ["*"]
+
+[oidc]
+# OIDC configuration will be set via environment variables:
+# OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_TENANT_ID, OIDC_REDIRECT_URI
+
+# Provider configuration
+provider_url = "https://login.microsoftonline.com/{tenant}/v2.0"
+scopes = ["openid", "profile", "email", "User.Read"]
+
+# Token validation
+validate_tokens = true
+token_cache_ttl = 300  # 5 minutes
+jwks_cache_ttl = 3600  # 1 hour
+
+[vpn]
+# VPN integration settings
+enabled = false  # Will be enabled via environment if keys are provided
+
+[vpn.tailscale]
+# Tailscale configuration
+enabled = false
+hostname = "ghostlink-server"
+advertise_routes = []
+accept_routes = false
+
+[vpn.wireguard]
+# WireGuard configuration
+enabled = false
+port = 51820
+interface_name = "wg0"
+
+[logging]
+# Logging configuration
+level = "info"  # Can be overridden by RUST_LOG environment variable
+format = "json"  # JSON format for container logging
+
+# Log destinations
+console = true
+file = false  # Disable file logging in containers (use container logs)
+
+# Audit logging
+audit_enabled = true
+audit_destination = "database"  # Store audit logs in database
+
+[features]
+# Feature toggles for different capabilities
+toolbox_enabled = true
+branding_enabled = true
+direct_connect_enabled = true
+terminal_enabled = true
+pam_enabled = true
+
+[toolbox]
+# Toolbox configuration
+storage_path = "/app/toolbox"
+max_storage_size = "1GB"
+allowed_categories = ["sysinternals", "nirsoft", "custom", "scripts"]
+
+# Tool execution settings
+execution_timeout = 300  # 5 minutes
+max_concurrent_executions = 5
+audit_all_executions = true
+
+[terminal]
+# Terminal configuration
+default_shell = "bash"  # or "powershell" on Windows
+max_sessions_per_user = 5
+session_timeout = 3600  # 1 hour
+max_output_buffer = 10000  # lines
+
+# Command restrictions
+restricted_commands = [
+    "rm -rf /",
+    "format",
+    "del /f /s /q C:\\*",
+    "shutdown",
+    "reboot"
+]
+
+[pam]
+# Privileged Access Management configuration
+enabled = true
+require_justification = true
+approval_required_for_admin = true
+approval_required_for_system = true
+max_elevation_duration = 7200  # 2 hours
+audit_retention_days = 90
+
+# Auto-approval settings
+auto_approve_threshold_minutes = 5
+auto_approve_local_admin = false
+auto_approve_domain_admin = false
+
+[branding]
+# Default branding configuration
+company_name = "GhostLink Remote Access"
+primary_color = "#0d6efd"
+secondary_color = "#6c757d"
+accent_color = "#198754"
+
+[direct_connect]
+# Direct connection settings
+enabled = true
+relay_servers = [
+    { address = "relay1.ghostlink.com", port = 21118, region = "us-east-1" },
+    { address = "relay2.ghostlink.com", port = 21118, region = "us-west-1" },
+    { address = "relay3.ghostlink.com", port = 21118, region = "eu-west-1" }
+]
+
+# NAT traversal settings
+enable_upnp = true
+enable_hole_punching = true
+stun_servers = [
+    "stun:stun.l.google.com:19302",
+    "stun:stun1.l.google.com:19302"
+]
+
+[metrics]
+# Metrics and monitoring
+enabled = true
+endpoint = "/metrics"
+include_sensitive = false
+
+# Prometheus format
+format = "prometheus"
+namespace = "ghostlink"
+
+[health]
+# Health check configuration
+enabled = true
+endpoint = "/api/health"
+include_database = true
+include_redis = true
+include_external_services = false

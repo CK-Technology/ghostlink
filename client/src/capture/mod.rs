@@ -1,11 +1,14 @@
-use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Mutex};
+use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
 
-use crate::session::SessionType;
+use crate::{
+    session::SessionType,
+    error::{Result, CaptureError, GhostLinkError},
+};
 
 #[cfg(target_os = "linux")]
 pub mod wayland;
@@ -22,10 +25,11 @@ pub mod encoding;
 
 /// Cross-platform screen capture abstraction
 pub struct ScreenCapture {
-    capturer: ScreenCapturerEnum,
+    capturer: Arc<Mutex<ScreenCapturerEnum>>,
     encoder: Arc<RwLock<Option<VideoEncoderEnum>>>,
     is_streaming: Arc<RwLock<bool>>,
     session_type: SessionType,
+    capture_task_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 /// Enum to hold different screen capturer implementations
@@ -60,11 +64,14 @@ pub trait ScreenCapturer: Send + Sync {
     /// Capture a single frame
     async fn capture_frame(&self) -> Result<Frame>;
     
-    /// Get available displays/monitors
-    async fn get_displays(&self) -> Result<Vec<Display>>;
+    /// Get available display information
+    fn get_display_info(&self) -> Vec<DisplayInfo>;
     
     /// Set which display to capture (for multi-monitor)
-    async fn set_display(&mut self, display_id: u32) -> Result<()>;
+    fn select_display(&mut self, display_id: u32) -> Result<()>;
+    
+    /// Set capture region
+    fn set_capture_region(&mut self, x: i32, y: i32, width: u32, height: u32) -> Result<()>;
     
     /// Get current capture resolution
     fn get_resolution(&self) -> (u32, u32);
@@ -98,7 +105,8 @@ pub struct Frame {
     pub data: Vec<u8>,
     pub width: u32,
     pub height: u32,
-    pub format: PixelFormat,
+    pub pixel_format: PixelFormat,
+    pub stride: u32,
     pub timestamp: u64,
 }
 
@@ -115,7 +123,7 @@ pub enum PixelFormat {
 
 /// Display/monitor information
 #[derive(Debug, Clone)]
-pub struct Display {
+pub struct DisplayInfo {
     pub id: u32,
     pub name: String,
     pub width: u32,
@@ -123,7 +131,6 @@ pub struct Display {
     pub x: i32,
     pub y: i32,
     pub is_primary: bool,
-    pub scale_factor: f32,
 }
 
 /// Video encoder information
@@ -141,10 +148,11 @@ impl ScreenCapture {
         let capturer = Self::create_platform_capturer().await?;
         
         let mut screen_capture = Self {
-            capturer,
+            capturer: Arc::new(Mutex::new(capturer)),
             encoder: Arc::new(RwLock::new(None)),
             is_streaming: Arc::new(RwLock::new(false)),
             session_type,
+            capture_task_handle: Arc::new(Mutex::new(None)),
         };
         
         screen_capture.initialize().await?;
@@ -180,7 +188,9 @@ impl ScreenCapture {
         
         #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
         {
-            Err(anyhow::anyhow!("Unsupported platform for screen capture"))
+            Err(CaptureError::UnsupportedPlatform {
+                platform: std::env::consts::OS.to_string(),
+            }.into())
         }
     }
 
@@ -188,10 +198,16 @@ impl ScreenCapture {
     async fn initialize(&mut self) -> Result<()> {
         info!("Initializing screen capture");
         
-        self.capturer.initialize().await?;
+        {
+            let mut capturer_guard = self.capturer.lock().await;
+            capturer_guard.initialize().await?;
+        }
         
         // Initialize encoder
-        let (width, height) = self.capturer.get_resolution();
+        let (width, height) = {
+            let capturer_guard = self.capturer.lock().await;
+            capturer_guard.get_resolution()
+        };
         let mut encoder = encoding::create_best_encoder().await?;
         encoder.initialize(width, height, 30).await?;
         
@@ -222,27 +238,72 @@ impl ScreenCapture {
 
     /// Start the capture loop in background
     async fn start_capture_loop(&self) -> Result<()> {
-        // We need to move the capturer into the task, so we'll need to restructure this
-        // For now, let's comment this out and implement a different approach
-        
-        let is_streaming = Arc::clone(&self.is_streaming);
+        let capturer = Arc::clone(&self.capturer);
         let encoder = Arc::clone(&self.encoder);
+        let is_streaming = Arc::clone(&self.is_streaming);
         
-        // TODO: Implement a better approach where the capturer can be shared
-        // or where the capture loop is managed differently
+        // Spawn capture loop task
+        let handle = tokio::spawn(async move {
+            info!("Capture loop started");
+            let mut capture_interval = interval(Duration::from_millis(33)); // ~30 FPS
+            
+            while *is_streaming.read().await {
+                capture_interval.tick().await;
+                
+                // Capture frame
+                let frame_result = {
+                    let capturer_guard = capturer.lock().await;
+                    capturer_guard.capture_frame().await
+                };
+                
+                match frame_result {
+                    Ok(frame) => {
+                        debug!("Captured frame: {}x{}", frame.width, frame.height);
+                        
+                        // Encode frame if encoder is available
+                        if let Some(encoder) = encoder.read().await.as_ref() {
+                            match encoder.encode_frame(&frame).await {
+                                Ok(encoded_data) => {
+                                    debug!("Frame encoded: {} bytes", encoded_data.len());
+                                    // TODO: Send encoded data via websocket/relay
+                                },
+                                Err(e) => {
+                                    error!("Failed to encode frame: {}", e);
+                                }
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        error!("Failed to capture frame: {}", e);
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
+            }
+            
+            info!("Capture loop stopped");
+        });
         
-        info!("Capture loop start requested - implementation needed");
-        
-        // Set streaming to true for now
-        *is_streaming.write().await = true;
+        // Store task handle for cleanup
+        let mut task_handle = self.capture_task_handle.lock().await;
+        *task_handle = Some(handle);
         
         Ok(())
     }
 
     /// Stop streaming screen capture
     pub async fn stop_streaming(&self) -> Result<()> {
-        let mut streaming_guard = self.is_streaming.write().await;
-        *streaming_guard = false;
+        {
+            let mut streaming_guard = self.is_streaming.write().await;
+            *streaming_guard = false;
+        }
+        
+        // Wait for capture task to finish
+        let mut task_handle = self.capture_task_handle.lock().await;
+        if let Some(handle) = task_handle.take() {
+            if let Err(e) = handle.await {
+                warn!("Capture task ended with error: {}", e);
+            }
+        }
         
         info!("Screen capture streaming stopped");
         Ok(())
@@ -250,23 +311,27 @@ impl ScreenCapture {
 
     /// Get available displays
     pub async fn get_displays(&self) -> Result<Vec<Display>> {
-        self.capturer.get_displays().await
+        let capturer_guard = self.capturer.lock().await;
+        capturer_guard.get_displays().await
     }
 
     /// Set capture display (for multi-monitor)
     pub async fn set_display(&mut self, display_id: u32) -> Result<()> {
         info!("Setting capture display to: {}", display_id);
-        self.capturer.set_display(display_id).await
+        let mut capturer_guard = self.capturer.lock().await;
+        capturer_guard.set_display(display_id).await
     }
 
     /// Get current resolution
-    pub fn get_resolution(&self) -> (u32, u32) {
-        self.capturer.get_resolution()
+    pub async fn get_resolution(&self) -> (u32, u32) {
+        let capturer_guard = self.capturer.lock().await;
+        capturer_guard.get_resolution()
     }
 
     /// Check if capture is healthy
-    pub fn is_healthy(&self) -> bool {
-        self.capturer.is_healthy()
+    pub async fn is_healthy(&self) -> bool {
+        let capturer_guard = self.capturer.lock().await;
+        capturer_guard.is_healthy()
     }
 
     /// Get encoder information

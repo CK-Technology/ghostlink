@@ -4,6 +4,7 @@ use std::env;
 use std::path::Path;
 use uuid::Uuid;
 
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientConfig {
     pub agent_id: String,
@@ -69,5 +70,60 @@ impl ClientConfig {
         // For now, generate a new UUID each time
         // TODO: Implement persistent storage
         Ok(Uuid::new_v4().to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_new_config() {
+        let config = ClientConfig::new(
+            "wss://test.example.com".to_string(),
+            Some("Test Device".to_string()),
+        ).unwrap();
+        
+        assert_eq!(config.server_url, "wss://test.example.com");
+        assert_eq!(config.hostname, "Test Device");
+        assert_eq!(config.reconnect_interval, 30);
+        assert_eq!(config.heartbeat_interval, 30);
+        assert_eq!(config.max_concurrent_sessions, 5);
+        assert_eq!(config.log_level, "info");
+        assert!(!config.agent_id.is_empty());
+    }
+
+    #[test]
+    fn test_new_config_default_hostname() {
+        let config = ClientConfig::new(
+            "wss://test.example.com".to_string(),
+            None,
+        ).unwrap();
+        
+        assert_eq!(config.server_url, "wss://test.example.com");
+        assert!(!config.hostname.is_empty());
+    }
+
+    #[test]
+    fn test_config_save_and_load() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let temp_path = temp_file.path();
+        
+        // Create and save config
+        let original_config = ClientConfig::new(
+            "wss://save-test.example.com".to_string(),
+            Some("Save Test Device".to_string()),
+        ).unwrap();
+        
+        original_config.save(temp_path).unwrap();
+        
+        // Load config
+        let loaded_config = ClientConfig::load(temp_path).unwrap();
+        
+        assert_eq!(original_config.server_url, loaded_config.server_url);
+        assert_eq!(original_config.hostname, loaded_config.hostname);
+        assert_eq!(original_config.agent_id, loaded_config.agent_id);
     }
 }

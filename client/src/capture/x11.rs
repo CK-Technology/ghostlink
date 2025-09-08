@@ -1,21 +1,30 @@
-use crate::capture::{Display, Frame, ScreenCapturer, PixelFormat};
-use anyhow::Result;
 use async_trait::async_trait;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
+use crate::error::{Result, CaptureError, GhostLinkError};
+use super::{Frame, PixelFormat, ScreenCapturer, DisplayInfo};
 
+/// X11 screen capturer
 pub struct X11Capturer {
-    current_display: Option<u32>,
-    displays: Vec<Display>,
+    width: u32,
+    height: u32,
+    is_initialized: bool,
 }
 
 impl X11Capturer {
     pub async fn new() -> Result<Self> {
-        debug!("Creating new X11 capturer");
+        info!("Initializing X11 screen capturer");
+        
+        // Check if we're running under X11
+        if std::env::var("DISPLAY").is_err() {
+            return Err(GhostLinkError::Capture(CaptureError::UnsupportedPlatform {
+                platform: "No DISPLAY environment variable".to_string(),
+            }));
+        }
+        
         Ok(Self {
-            current_display: None,
-            displays: Vec::new(),
+            width: 0,
+            height: 0,
+            is_initialized: false,
         })
     }
 }
@@ -25,100 +34,57 @@ impl ScreenCapturer for X11Capturer {
     async fn initialize(&mut self) -> Result<()> {
         info!("Initializing X11 screen capturer");
         
-        // TODO: Implement X11 initialization
-        // This would typically involve:
-        // - Opening connection to X11 display
-        // - Querying available screens/displays
-        // - Setting up XShmGetImage or similar for efficient capture
+        // For now, use default resolution
+        self.width = 1920;
+        self.height = 1080;
+        self.is_initialized = true;
         
-        // For now, create a dummy display
-        self.displays = vec![Display {
-            id: 0,
-            name: "X11 Primary Display".to_string(),
-            width: 1920,
-            height: 1080,
-            x: 0,
-            y: 0,
-            is_primary: true,
-            scale_factor: 1.0,
-        }];
-        
-        self.current_display = Some(0);
-        
-        warn!("X11 capturer initialized with stub implementation");
         Ok(())
     }
-
-    async fn capture_frame(&self) -> Result<Frame> {
-        debug!("Capturing frame from X11 display");
+    
+    async fn capture_frame(&mut self) -> Result<Frame> {
+        if !self.is_initialized {
+            return Err(GhostLinkError::Capture(CaptureError::NotInitialized));
+        }
         
-        // TODO: Implement actual X11 frame capture
-        // This would typically involve:
-        // - Using XShmGetImage or XGetImage to capture screen content
-        // - Converting from X11 format to our Frame format
-        // - Handling different bit depths and color formats
-        
+        // TODO: Implement actual X11 screen capture
         // For now, return a dummy frame
-        let width = 1920;
-        let height = 1080;
-        let data = vec![0u8; (width * height * 4) as usize]; // RGBA format
+        let data = vec![0u8; (self.width * self.height * 4) as usize];
         
         Ok(Frame {
             data,
-            width,
-            height,
-            format: PixelFormat::RGBA,
+            width: self.width,
+            height: self.height,
+            stride: self.width * 4,
+            pixel_format: PixelFormat::RGBA,
             timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
                 .as_millis() as u64,
         })
     }
-
-    async fn get_displays(&self) -> Result<Vec<Display>> {
-        debug!("Getting available X11 displays");
-        Ok(self.displays.clone())
+    
+    fn get_display_info(&self) -> Vec<DisplayInfo> {
+        vec![DisplayInfo {
+            id: 0,
+            name: "X11 Display".to_string(),
+            x: 0,
+            y: 0,
+            width: self.width,
+            height: self.height,
+            is_primary: true,
+        }]
     }
-
-    async fn set_display(&mut self, display_id: u32) -> Result<()> {
-        debug!("Setting X11 display to {}", display_id);
-        
-        if self.displays.iter().any(|d| d.id == display_id) {
-            self.current_display = Some(display_id);
-            info!("X11 display set to {}", display_id);
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("Display {} not found", display_id))
-        }
-    }
-
-    async fn cleanup(&mut self) -> Result<()> {
-        info!("Cleaning up X11 capturer");
-        
-        // TODO: Implement X11 cleanup
-        // This would typically involve:
-        // - Closing X11 display connection
-        // - Freeing any allocated resources
-        // - Detaching from shared memory segments
-        
-        self.current_display = None;
-        self.displays.clear();
-        
-        info!("X11 capturer cleaned up");
+    
+    fn select_display(&mut self, _display_id: u32) -> Result<()> {
         Ok(())
     }
-
-    fn get_resolution(&self) -> (u32, u32) {
-        if let Some(display_id) = self.current_display {
-            if let Some(display) = self.displays.iter().find(|d| d.id == display_id) {
-                return (display.width, display.height);
-            }
-        }
-        (1920, 1080) // Default resolution
+    
+    fn set_capture_region(&mut self, _x: i32, _y: i32, _width: u32, _height: u32) -> Result<()> {
+        Ok(())
     }
-
+    
     fn is_healthy(&self) -> bool {
-        // TODO: Implement health check for X11 connection
-        // This would typically check if the X11 display connection is still valid
-        true
+        self.is_initialized
     }
 }

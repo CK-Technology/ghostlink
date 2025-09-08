@@ -57,7 +57,16 @@ windows = { version = "0.52", features = [
 x11 = { version = "2.21", optional = true }
 xcb = { version = "1.4", optional = true }
 
+[dev-dependencies]
+tokio-test.workspace = true
+mockall.workspace = true
+tempfile.workspace = true
+serial_test.workspace = true
+
 [features]
 default = []
 x11 = ["dep:x11"]
 wayland = ["dep:xcb"]
+nvenc = []
+qsv = []
+videotoolbox = []

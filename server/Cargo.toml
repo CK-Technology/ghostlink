@@ -10,6 +10,9 @@ leptos_axum.workspace = true
 leptos_meta.workspace = true
 leptos_router.workspace = true
 wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys.workspace = true
+gloo-utils.workspace = true
 
 # Web framework and async runtime
 tokio.workspace = true
@@ -62,11 +65,3 @@ ssr = [
     "leptos_meta/ssr",
     "leptos_router/ssr",
 ]
-
-# Defines a size-optimized profile for the WASM bundle in release mode
-[profile.wasm-release]
-inherits = "release"
-opt-level = 'z'
-lto = true
-codegen-units = 1
-panic = "abort"

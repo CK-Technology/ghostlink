@@ -1,9 +1,9 @@
-use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{info, warn, error};
 
+mod error;
 mod agent;
 mod capture;
 mod config;
@@ -11,6 +11,8 @@ mod connection;
 mod service;
 mod session;
 mod input;
+
+use error::{Result, GhostLinkError};
 
 use crate::{
     agent::Agent,

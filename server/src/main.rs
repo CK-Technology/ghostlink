@@ -1,40 +1,50 @@
 use axum::{
-    extract::{Query, State, WebSocketUpgrade},
+    extract::State,
     http::StatusCode,
-    response::{Html, IntoResponse, Response},
-    routing::{get, post},
+    response::{IntoResponse, Response},
+    routing::{delete, get, post},
     Router,
 };
 use leptos::*;
 use leptos_axum::{generate_route_list, handle_server_fns, LeptosRoutes};
 use leptos_config::get_configuration;
-use std::{collections::HashMap, sync::Arc};
-use tokio::sync::RwLock;
+use std::sync::Arc;
 use tower::ServiceBuilder;
 use tower_http::{
     cors::CorsLayer,
     services::ServeDir,
     trace::TraceLayer,
 };
-use tracing::{info, warn};
+use tracing::info;
 
+mod api;
 mod config;
 mod models;
 mod relay;
 mod web;
+mod device_manager;
+mod toolbox;
+mod branding;
+mod direct_connect;
+mod vpn_integration;
+mod auth {
+    pub mod oidc;
+}
+mod pam;
+mod terminal;
 
 use crate::{
     config::AppConfig,
     models::{Agent, Session},
     relay::handle_websocket,
     web::app::App,
+    device_manager::DeviceManager,
 };
 
 // Application state for the server
 #[derive(Clone)]
 pub struct AppState {
-    pub devices: Arc<RwLock<HashMap<String, Agent>>>,
-    pub sessions: Arc<RwLock<HashMap<String, Session>>>,
+    pub device_manager: Arc<DeviceManager>,
     pub config: AppConfig,
 }
 
@@ -50,9 +60,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting AtlasConnect Server on {}:{}", config.host, config.port);
 
     // Initialize app state
+    let device_manager = Arc::new(DeviceManager::new());
+    
+    // Initialize all managers
+    if let Err(e) = device_manager.initialize().await {
+        eprintln!("Failed to initialize device manager: {}", e);
+        std::process::exit(1);
+    }
+    
     let app_state = AppState {
-        devices: Arc::new(RwLock::new(HashMap::new())),
-        sessions: Arc::new(RwLock::new(HashMap::new())),
+        device_manager,
         config: config.clone(),
     };
 
@@ -68,21 +85,80 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Build relay routes (for relay.cktechx.com - client connections)
     let relay_routes = Router::new()
-        .route("/ws", get(websocket_handler))
-        .route("/health", get(health_check))
-        .route("/register", post(api_register_device))
+        .route("/ws", get(api::websocket_device_handler))
+        .route("/health", get(api::health_check))
+        .route("/register", post(api::api_register_device))
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
                 .layer(CorsLayer::permissive()),
         );
 
+    // Build API routes
+    let api_routes = Router::new()
+        .route("/api/devices", get(api::api_get_devices))
+        .route("/api/devices/:id/sessions", get(api::api_get_device_sessions))
+        .route("/api/devices/:id/sessions", post(api::api_create_session))
+        .route("/api/sessions/:id", delete(api::api_end_session))
+        .route("/api/stats", get(api::api_get_stats))
+        .route("/api/ws", get(api::websocket_session_handler))
+        
+        // Toolbox API routes
+        .route("/api/toolbox/tools", get(toolbox::api_get_available_tools))
+        .route("/api/toolbox/tools/:category", get(toolbox::api_get_tools_by_category))
+        .route("/api/toolbox/execute", post(toolbox::api_execute_tool))
+        .route("/api/toolbox/upload", post(toolbox::api_upload_custom_tool))
+        .route("/api/toolbox/history", get(toolbox::api_get_execution_history))
+        
+        // Branding API routes
+        .route("/api/branding/config", get(branding::api_get_branding_config))
+        .route("/api/branding/config", post(branding::api_update_branding_config))
+        .route("/api/branding/banners/:session_id", post(branding::api_create_banner))
+        .route("/api/branding/banners/:session_id", get(branding::api_get_session_banner))
+        .route("/api/branding/banners/:banner_id/acknowledge", post(branding::api_acknowledge_banner))
+        .route("/api/branding/theme.css", get(branding::api_get_theme_css))
+        
+        // Direct Connect API routes
+        .route("/api/direct/register", post(direct_connect::api_register_direct_client))
+        .route("/api/direct/connect", post(direct_connect::api_connect_direct))
+        .route("/api/direct/stats", get(direct_connect::api_direct_connect_stats))
+        .route("/api/direct/relay/ws", get(direct_connect::websocket_direct_relay_handler))
+        
+        // VPN Integration API routes
+        .route("/api/vpn/status", get(vpn_integration::api_get_vpn_status))
+        .route("/api/vpn/peers", get(vpn_integration::api_get_vpn_peers))
+        .route("/api/vpn/tailscale/enable", post(vpn_integration::api_enable_tailscale))
+        .route("/api/vpn/wireguard/config", get(vpn_integration::api_get_wireguard_config))
+        
+        // OIDC Authentication API routes
+        .route("/api/auth/login", get(auth::oidc::api_oidc_login))
+        .route("/api/auth/callback", get(auth::oidc::api_oidc_callback))
+        .route("/api/auth/validate", get(auth::oidc::api_validate_session))
+        .route("/api/auth/logout", post(auth::oidc::api_logout))
+        .route("/api/auth/nginx", get(auth::oidc::api_nginx_auth))
+        
+        // PAM (Privileged Access Management) API routes
+        .route("/api/pam/sessions/:session_id/elevate", post(pam::api_request_elevation))
+        .route("/api/pam/elevation/:request_id/approve", post(pam::api_approve_elevation))
+        .route("/api/pam/elevation/:request_id/session", post(pam::api_start_elevated_session))
+        .route("/api/pam/elevated/:session_id/execute", post(pam::api_execute_elevated_command))
+        .route("/api/pam/audit", get(pam::api_get_pam_audit_log))
+        .route("/api/pam/stats", get(pam::api_get_pam_stats))
+        
+        // Terminal API routes
+        .route("/api/terminal/:client_session_id/create", post(terminal::api_create_terminal_session))
+        .route("/api/terminal/:session_id", get(terminal::api_get_terminal_session))
+        .route("/api/terminal/:session_id/output", get(terminal::api_get_terminal_output))
+        .route("/api/terminal/:session_id/ws", get(terminal::websocket_terminal_handler))
+        .route("/api/terminal/history", get(terminal::api_get_command_history))
+        .route("/api/terminal/config", get(terminal::api_get_terminal_config))
+        
+        .with_state(app_state.clone());
+
     // Build web GUI routes (for atlas.cktechx.com - admin interface)
     let web_routes = Router::new()
         .leptos_routes(&leptos_options, routes, App)
         .fallback(file_and_error_handler)
-        .route("/api/devices", get(api_get_devices))
-        .route("/api/devices/:id/connect", post(api_connect_device))
         .route("/api/*fn_name", post(handle_server_fns))
         .nest_service("/pkg", ServeDir::new("target/site/pkg"))
         .layer(
@@ -95,8 +171,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Combine routes with prefixes for nginx routing
     let app = Router::new()
         .nest("/relay", relay_routes) // relay.cktechx.com/relay/*
-        .merge(web_routes) // atlas.cktechx.com/*
-        .with_state(app_state);
+        .merge(api_routes) // API routes with AppState
+        .merge(web_routes); // Web routes with LeptosOptions
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     info!("🚀 AtlasConnect Server listening on http://{}", &addr);
@@ -147,72 +223,3 @@ async fn get_static_file(
     }
 }
 
-// API Handlers
-async fn api_get_devices() -> impl IntoResponse {
-    // TODO: Get real devices from state
-    axum::Json(serde_json::json!({
-        "devices": [
-            {
-                "id": "device-001",
-                "name": "Windows Workstation",
-                "os": "Windows 11",
-                "status": "online",
-                "last_seen": "2025-07-02T10:30:00Z",
-                "ip_address": "192.168.1.100"
-            },
-            {
-                "id": "device-002", 
-                "name": "Ubuntu Server",
-                "os": "Ubuntu 22.04",
-                "status": "online",
-                "last_seen": "2025-07-02T10:29:45Z",
-                "ip_address": "192.168.1.50"
-            }
-        ]
-    }))
-}
-
-async fn api_connect_device(
-    axum::extract::Path(device_id): axum::extract::Path<String>,
-) -> impl IntoResponse {
-    info!("Initiating connection to device: {}", device_id);
-    axum::Json(serde_json::json!({
-        "status": "success",
-        "message": "Connection initiated",
-        "session_id": uuid::Uuid::new_v4()
-    }))
-}
-
-// Health check endpoint
-async fn health_check() -> impl IntoResponse {
-    axum::Json(serde_json::json!({
-        "status": "healthy",
-        "service": "atlasconnect-server",
-        "timestamp": chrono::Utc::now()
-    }))
-}
-
-// Device registration endpoint (for clients)
-async fn api_register_device(
-    axum::Json(device_info): axum::Json<serde_json::Value>,
-) -> impl IntoResponse {
-    info!("Device registration: {:?}", device_info);
-    
-    let device_id = uuid::Uuid::new_v4().to_string();
-    
-    axum::Json(serde_json::json!({
-        "status": "success",
-        "device_id": device_id,
-        "message": "Device registered successfully"
-    }))
-}
-
-async fn websocket_handler(
-    ws: WebSocketUpgrade,
-    Query(params): Query<HashMap<String, String>>,
-) -> Response {
-    let device_id = params.get("device_id").cloned();
-    let session_type = params.get("type").cloned().unwrap_or_else(|| "control".to_string());
-    
-    ws.on_upgrade(move |socket| handle_websocket(socket, device_id, session_type))
-}
