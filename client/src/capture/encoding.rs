@@ -9,10 +9,10 @@ pub async fn create_best_encoder() -> Result<VideoEncoderEnum> {
     
     #[cfg(feature = "nvenc")]
     {
-        if let Ok(encoder) = NvencEncoder::new().await {
-            info!("Using NVIDIA NVENC hardware encoder");
-            return Ok(VideoEncoderEnum::Nvenc(encoder));
-        }
+        use crate::capture::nvenc_encoder::{NvencEncoder, NvencCodec};
+        let encoder = NvencEncoder::new(NvencCodec::H264);
+        info!("Using NVIDIA NVENC H.264 hardware encoder");
+        return Ok(VideoEncoderEnum::NvencH264(encoder));
     }
     
     #[cfg(feature = "qsv")]

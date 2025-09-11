@@ -87,4 +87,17 @@ impl ScreenCapturer for X11Capturer {
     fn is_healthy(&self) -> bool {
         self.is_initialized
     }
+    
+    fn get_resolution(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+    
+    async fn cleanup(&mut self) -> Result<()> {
+        info!("Cleaning up X11 screen capturer");
+        
+        // TODO: Close X11 connection properly
+        self.is_initialized = false;
+        
+        Ok(())
+    }
 }

@@ -65,6 +65,13 @@ wiremock = "0.6"
 tempfile = "3.8"
 serial_test = "3.0"
 
+# Additional server dependencies
+ipnetwork = "0.20"
+base64 = "0.22"
+url = "2.4"
+reqwest = { version = "0.12", features = ["json"] }
+urlencoding = "2.1"
+
 # Defines a size-optimized profile for the WASM bundle in release mode
 [profile.wasm-release]
 inherits = "release"

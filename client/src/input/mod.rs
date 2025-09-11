@@ -472,3 +472,34 @@ pub fn translate_key_code(key: KeyCode) -> u32 {
         _ => 0, // TODO: Implement proper key code translation
     }
 }
+
+// ===== New Native Input System =====
+
+// Native input implementations
+#[cfg(target_os = "linux")]
+pub mod x11_input;
+
+// Cross-platform input protocol and service
+pub mod input_protocol;
+pub mod input_service;
+
+// Re-exports for convenience
+pub use input_protocol::{
+    InputEvent as NewInputEvent, 
+    InputStats, 
+    MouseButtonType, 
+    KeyType, 
+    SpecialKeyType, 
+    ModifierFlags, 
+    ScrollDirectionType
+};
+pub use input_service::{InputService, InputServiceConfig};
+
+#[cfg(target_os = "linux")]
+pub use x11_input::{
+    X11InputInjector, 
+    MouseButton as X11MouseButton, 
+    ScrollDirection, 
+    SpecialKey, 
+    KeyModifiers
+};

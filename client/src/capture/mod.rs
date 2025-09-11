@@ -14,6 +14,10 @@ use crate::{
 pub mod wayland;
 #[cfg(target_os = "linux")]
 pub mod x11;
+#[cfg(target_os = "linux")]
+pub mod x11_fast;
+#[cfg(target_os = "linux")]
+pub mod wayland_fast;
 
 #[cfg(target_os = "windows")]
 pub mod windows;
@@ -22,6 +26,13 @@ pub mod windows;
 pub mod macos;
 
 pub mod encoding;
+pub mod h264_encoder;
+pub mod hevc_encoder;
+pub mod nvenc_encoder;
+pub mod encoder_factory;
+pub mod frame_protocol;
+pub mod frame_streaming;
+pub mod monitor_manager;
 
 /// Cross-platform screen capture abstraction
 pub struct ScreenCapture {
@@ -38,6 +49,10 @@ pub enum ScreenCapturerEnum {
     Wayland(wayland::WaylandCapturer),
     #[cfg(target_os = "linux")]
     X11(x11::X11Capturer),
+    #[cfg(target_os = "linux")]
+    X11Fast(x11_fast::X11FastCapturer),
+    #[cfg(target_os = "linux")]
+    WaylandFast(wayland_fast::WaylandFastCapturer),
     #[cfg(target_os = "windows")]
     Windows(windows::DxgiCapturer),
     #[cfg(target_os = "macos")]
@@ -47,8 +62,14 @@ pub enum ScreenCapturerEnum {
 /// Enum to hold different video encoder implementations
 pub enum VideoEncoderEnum {
     Software(encoding::SoftwareEncoder),
+    H264(h264_encoder::H264Encoder),
+    Hevc(hevc_encoder::HevcEncoder),
     #[cfg(feature = "nvenc")]
-    Nvenc(encoding::NvencEncoder),
+    NvencH264(nvenc_encoder::NvencEncoder),
+    #[cfg(feature = "nvenc")]
+    NvencH265(nvenc_encoder::NvencEncoder),
+    #[cfg(feature = "nvenc")]
+    NvencAV1(nvenc_encoder::NvencEncoder),
     #[cfg(feature = "qsv")]
     Qsv(encoding::QsvEncoder),
     #[cfg(feature = "videotoolbox")]
@@ -62,7 +83,7 @@ pub trait ScreenCapturer: Send + Sync {
     async fn initialize(&mut self) -> Result<()>;
     
     /// Capture a single frame
-    async fn capture_frame(&self) -> Result<Frame>;
+    async fn capture_frame(&mut self) -> Result<Frame>;
     
     /// Get available display information
     fn get_display_info(&self) -> Vec<DisplayInfo>;
@@ -97,6 +118,12 @@ pub trait VideoEncoder: Send + Sync {
     
     /// Check if encoder is healthy
     fn is_healthy(&self) -> bool;
+    
+    /// Cleanup encoder resources
+    async fn cleanup(&mut self) -> Result<()> {
+        // Default implementation does nothing
+        Ok(())
+    }
 }
 
 /// Represents a captured screen frame
@@ -164,13 +191,26 @@ impl ScreenCapture {
     async fn create_platform_capturer() -> Result<ScreenCapturerEnum> {
         #[cfg(target_os = "linux")]
         {
+            // Check for high-performance capture preference
+            let use_fast_capture = std::env::var("GHOSTLINK_FAST_CAPTURE")
+                .map(|v| v == "1" || v.to_lowercase() == "true")
+                .unwrap_or(true); // Default to fast capture
+            
             // Try Wayland first, fall back to X11
             if std::env::var("WAYLAND_DISPLAY").is_ok() {
-                info!("Using Wayland screen capture");
-                Ok(ScreenCapturerEnum::Wayland(wayland::WaylandCapturer::new().await?))
+                info!("Using Wayland screen capture (60fps capable)");
+                if use_fast_capture {
+                    Ok(ScreenCapturerEnum::WaylandFast(wayland_fast::WaylandFastCapturer::new().await?))
+                } else {
+                    Ok(ScreenCapturerEnum::Wayland(wayland::WaylandCapturer::new().await?))
+                }
             } else {
-                info!("Using X11 screen capture");
-                Ok(ScreenCapturerEnum::X11(x11::X11Capturer::new().await?))
+                info!("Using X11 screen capture (60fps capable)");
+                if use_fast_capture {
+                    Ok(ScreenCapturerEnum::X11Fast(x11_fast::X11FastCapturer::new().await?))
+                } else {
+                    Ok(ScreenCapturerEnum::X11(x11::X11Capturer::new().await?))
+                }
             }
         }
         
@@ -252,7 +292,7 @@ impl ScreenCapture {
                 
                 // Capture frame
                 let frame_result = {
-                    let capturer_guard = capturer.lock().await;
+                    let mut capturer_guard = capturer.lock().await;
                     capturer_guard.capture_frame().await
                 };
                 
@@ -310,16 +350,16 @@ impl ScreenCapture {
     }
 
     /// Get available displays
-    pub async fn get_displays(&self) -> Result<Vec<Display>> {
+    pub async fn get_displays(&self) -> Result<Vec<DisplayInfo>> {
         let capturer_guard = self.capturer.lock().await;
-        capturer_guard.get_displays().await
+        Ok(capturer_guard.get_display_info())
     }
 
     /// Set capture display (for multi-monitor)
     pub async fn set_display(&mut self, display_id: u32) -> Result<()> {
         info!("Setting capture display to: {}", display_id);
         let mut capturer_guard = self.capturer.lock().await;
-        capturer_guard.set_display(display_id).await
+        capturer_guard.select_display(display_id)
     }
 
     /// Get current resolution
@@ -349,6 +389,10 @@ impl ScreenCapturerEnum {
             ScreenCapturerEnum::Wayland(ref mut capturer) => capturer.initialize().await,
             #[cfg(target_os = "linux")]
             ScreenCapturerEnum::X11(ref mut capturer) => capturer.initialize().await,
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::X11Fast(ref mut capturer) => capturer.initialize().await,
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::WaylandFast(ref mut capturer) => capturer.initialize().await,
             #[cfg(target_os = "windows")]
             ScreenCapturerEnum::Windows(ref mut capturer) => capturer.initialize().await,
             #[cfg(target_os = "macos")]
@@ -357,12 +401,16 @@ impl ScreenCapturerEnum {
     }
     
     /// Capture a single frame
-    pub async fn capture_frame(&self) -> Result<Frame> {
+    pub async fn capture_frame(&mut self) -> Result<Frame> {
         match self {
             #[cfg(target_os = "linux")]
             ScreenCapturerEnum::Wayland(capturer) => capturer.capture_frame().await,
             #[cfg(target_os = "linux")]
             ScreenCapturerEnum::X11(capturer) => capturer.capture_frame().await,
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::X11Fast(capturer) => capturer.capture_frame().await,
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::WaylandFast(capturer) => capturer.capture_frame().await,
             #[cfg(target_os = "windows")]
             ScreenCapturerEnum::Windows(capturer) => capturer.capture_frame().await,
             #[cfg(target_os = "macos")]
@@ -370,31 +418,57 @@ impl ScreenCapturerEnum {
         }
     }
     
-    /// Get available displays/monitors
-    pub async fn get_displays(&self) -> Result<Vec<Display>> {
+    /// Get available display information
+    pub fn get_display_info(&self) -> Vec<DisplayInfo> {
         match self {
             #[cfg(target_os = "linux")]
-            ScreenCapturerEnum::Wayland(capturer) => capturer.get_displays().await,
+            ScreenCapturerEnum::Wayland(capturer) => capturer.get_display_info(),
             #[cfg(target_os = "linux")]
-            ScreenCapturerEnum::X11(capturer) => capturer.get_displays().await,
+            ScreenCapturerEnum::X11(capturer) => capturer.get_display_info(),
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::X11Fast(capturer) => capturer.get_display_info(),
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::WaylandFast(capturer) => capturer.get_display_info(),
             #[cfg(target_os = "windows")]
-            ScreenCapturerEnum::Windows(capturer) => capturer.get_displays().await,
+            ScreenCapturerEnum::Windows(capturer) => capturer.get_display_info(),
             #[cfg(target_os = "macos")]
-            ScreenCapturerEnum::MacOS(capturer) => capturer.get_displays().await,
+            ScreenCapturerEnum::MacOS(capturer) => capturer.get_display_info(),
         }
     }
     
     /// Set which display to capture (for multi-monitor)
-    pub async fn set_display(&mut self, display_id: u32) -> Result<()> {
+    pub fn select_display(&mut self, display_id: u32) -> Result<()> {
         match self {
             #[cfg(target_os = "linux")]
-            ScreenCapturerEnum::Wayland(ref mut capturer) => capturer.set_display(display_id).await,
+            ScreenCapturerEnum::Wayland(capturer) => capturer.select_display(display_id),
             #[cfg(target_os = "linux")]
-            ScreenCapturerEnum::X11(ref mut capturer) => capturer.set_display(display_id).await,
+            ScreenCapturerEnum::X11(capturer) => capturer.select_display(display_id),
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::X11Fast(capturer) => capturer.select_display(display_id),
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::WaylandFast(capturer) => capturer.select_display(display_id),
             #[cfg(target_os = "windows")]
-            ScreenCapturerEnum::Windows(ref mut capturer) => capturer.set_display(display_id).await,
+            ScreenCapturerEnum::Windows(capturer) => capturer.select_display(display_id),
             #[cfg(target_os = "macos")]
-            ScreenCapturerEnum::MacOS(ref mut capturer) => capturer.set_display(display_id).await,
+            ScreenCapturerEnum::MacOS(capturer) => capturer.select_display(display_id),
+        }
+    }
+    
+    /// Set capture region
+    pub fn set_capture_region(&mut self, x: i32, y: i32, width: u32, height: u32) -> Result<()> {
+        match self {
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::Wayland(capturer) => capturer.set_capture_region(x, y, width, height),
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::X11(capturer) => capturer.set_capture_region(x, y, width, height),
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::X11Fast(capturer) => capturer.set_capture_region(x, y, width, height),
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::WaylandFast(capturer) => capturer.set_capture_region(x, y, width, height),
+            #[cfg(target_os = "windows")]
+            ScreenCapturerEnum::Windows(capturer) => capturer.set_capture_region(x, y, width, height),
+            #[cfg(target_os = "macos")]
+            ScreenCapturerEnum::MacOS(capturer) => capturer.set_capture_region(x, y, width, height),
         }
     }
     
@@ -405,6 +479,10 @@ impl ScreenCapturerEnum {
             ScreenCapturerEnum::Wayland(capturer) => capturer.get_resolution(),
             #[cfg(target_os = "linux")]
             ScreenCapturerEnum::X11(capturer) => capturer.get_resolution(),
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::X11Fast(capturer) => capturer.get_resolution(),
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::WaylandFast(capturer) => capturer.get_resolution(),
             #[cfg(target_os = "windows")]
             ScreenCapturerEnum::Windows(capturer) => capturer.get_resolution(),
             #[cfg(target_os = "macos")]
@@ -419,10 +497,32 @@ impl ScreenCapturerEnum {
             ScreenCapturerEnum::Wayland(capturer) => capturer.is_healthy(),
             #[cfg(target_os = "linux")]
             ScreenCapturerEnum::X11(capturer) => capturer.is_healthy(),
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::X11Fast(capturer) => capturer.is_healthy(),
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::WaylandFast(capturer) => capturer.is_healthy(),
             #[cfg(target_os = "windows")]
             ScreenCapturerEnum::Windows(capturer) => capturer.is_healthy(),
             #[cfg(target_os = "macos")]
             ScreenCapturerEnum::MacOS(capturer) => capturer.is_healthy(),
+        }
+    }
+    
+    /// Cleanup capturer resources
+    pub async fn cleanup(&mut self) -> Result<()> {
+        match self {
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::Wayland(capturer) => capturer.cleanup().await,
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::X11(capturer) => capturer.cleanup().await,
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::X11Fast(capturer) => capturer.cleanup().await,
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::WaylandFast(capturer) => capturer.cleanup().await,
+            #[cfg(target_os = "windows")]
+            ScreenCapturerEnum::Windows(capturer) => capturer.cleanup().await,
+            #[cfg(target_os = "macos")]
+            ScreenCapturerEnum::MacOS(capturer) => capturer.cleanup().await,
         }
     }
 }
@@ -431,13 +531,19 @@ impl VideoEncoderEnum {
     /// Initialize encoder with settings
     pub async fn initialize(&mut self, width: u32, height: u32, fps: u32) -> Result<()> {
         match self {
-            VideoEncoderEnum::Software(ref mut encoder) => encoder.initialize(width, height, fps).await,
+            VideoEncoderEnum::Software(encoder) => encoder.initialize(width, height, fps).await,
+            VideoEncoderEnum::H264(encoder) => encoder.initialize(width, height, fps).await,
+            VideoEncoderEnum::Hevc(encoder) => encoder.initialize(width, height, fps).await,
             #[cfg(feature = "nvenc")]
-            VideoEncoderEnum::Nvenc(ref mut encoder) => encoder.initialize(width, height, fps).await,
+            VideoEncoderEnum::NvencH264(encoder) => encoder.initialize(width, height, fps).await,
+            #[cfg(feature = "nvenc")]
+            VideoEncoderEnum::NvencH265(encoder) => encoder.initialize(width, height, fps).await,
+            #[cfg(feature = "nvenc")]
+            VideoEncoderEnum::NvencAV1(encoder) => encoder.initialize(width, height, fps).await,
             #[cfg(feature = "qsv")]
-            VideoEncoderEnum::Qsv(ref mut encoder) => encoder.initialize(width, height, fps).await,
+            VideoEncoderEnum::Qsv(encoder) => encoder.initialize(width, height, fps).await,
             #[cfg(feature = "videotoolbox")]
-            VideoEncoderEnum::VideoToolbox(ref mut encoder) => encoder.initialize(width, height, fps).await,
+            VideoEncoderEnum::VideoToolbox(encoder) => encoder.initialize(width, height, fps).await,
         }
     }
     
@@ -445,8 +551,14 @@ impl VideoEncoderEnum {
     pub async fn encode_frame(&self, frame: &Frame) -> Result<Vec<u8>> {
         match self {
             VideoEncoderEnum::Software(encoder) => encoder.encode_frame(frame).await,
+            VideoEncoderEnum::H264(encoder) => encoder.encode_frame(frame).await,
+            VideoEncoderEnum::Hevc(encoder) => encoder.encode_frame(frame).await,
             #[cfg(feature = "nvenc")]
-            VideoEncoderEnum::Nvenc(encoder) => encoder.encode_frame(frame).await,
+            VideoEncoderEnum::NvencH264(encoder) => encoder.encode_frame(frame).await,
+            #[cfg(feature = "nvenc")]
+            VideoEncoderEnum::NvencH265(encoder) => encoder.encode_frame(frame).await,
+            #[cfg(feature = "nvenc")]
+            VideoEncoderEnum::NvencAV1(encoder) => encoder.encode_frame(frame).await,
             #[cfg(feature = "qsv")]
             VideoEncoderEnum::Qsv(encoder) => encoder.encode_frame(frame).await,
             #[cfg(feature = "videotoolbox")]
@@ -458,8 +570,14 @@ impl VideoEncoderEnum {
     pub fn get_encoder_info(&self) -> EncoderInfo {
         match self {
             VideoEncoderEnum::Software(encoder) => encoder.get_encoder_info(),
+            VideoEncoderEnum::H264(encoder) => encoder.get_encoder_info(),
+            VideoEncoderEnum::Hevc(encoder) => encoder.get_encoder_info(),
             #[cfg(feature = "nvenc")]
-            VideoEncoderEnum::Nvenc(encoder) => encoder.get_encoder_info(),
+            VideoEncoderEnum::NvencH264(encoder) => encoder.get_encoder_info(),
+            #[cfg(feature = "nvenc")]
+            VideoEncoderEnum::NvencH265(encoder) => encoder.get_encoder_info(),
+            #[cfg(feature = "nvenc")]
+            VideoEncoderEnum::NvencAV1(encoder) => encoder.get_encoder_info(),
             #[cfg(feature = "qsv")]
             VideoEncoderEnum::Qsv(encoder) => encoder.get_encoder_info(),
             #[cfg(feature = "videotoolbox")]
@@ -471,8 +589,14 @@ impl VideoEncoderEnum {
     pub fn is_healthy(&self) -> bool {
         match self {
             VideoEncoderEnum::Software(encoder) => encoder.is_healthy(),
+            VideoEncoderEnum::H264(encoder) => encoder.is_healthy(),
+            VideoEncoderEnum::Hevc(encoder) => encoder.is_healthy(),
             #[cfg(feature = "nvenc")]
-            VideoEncoderEnum::Nvenc(encoder) => encoder.is_healthy(),
+            VideoEncoderEnum::NvencH264(encoder) => encoder.is_healthy(),
+            #[cfg(feature = "nvenc")]
+            VideoEncoderEnum::NvencH265(encoder) => encoder.is_healthy(),
+            #[cfg(feature = "nvenc")]
+            VideoEncoderEnum::NvencAV1(encoder) => encoder.is_healthy(),
             #[cfg(feature = "qsv")]
             VideoEncoderEnum::Qsv(encoder) => encoder.is_healthy(),
             #[cfg(feature = "videotoolbox")]

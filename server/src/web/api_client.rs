@@ -6,7 +6,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{Request, RequestInit, RequestMode, Response};
 use gloo_utils::format::JsValueSerdeExt;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Device {
     pub id: String,
     pub name: String,

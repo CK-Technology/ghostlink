@@ -572,3 +572,23 @@ pub struct ToolExecutionRequest {
     pub device_id: String,
     pub parameters: HashMap<String, String>,
 }
+
+/// Get available tools
+pub async fn api_get_available_tools(
+    State(app_state): State<AppState>,
+) -> impl IntoResponse {
+    let tools = app_state.device_manager.toolbox_manager.get_all_tools().await;
+    Json(tools)
+}
+
+/// Upload custom tool (stub)
+pub async fn api_upload_custom_tool(
+    State(_app_state): State<AppState>,
+    mut _multipart: Multipart,
+) -> impl IntoResponse {
+    // TODO: Implement file upload for custom tools
+    Json(serde_json::json!({
+        "status": "error",
+        "message": "Upload custom tool not yet implemented"
+    }))
+}

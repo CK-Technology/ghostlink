@@ -73,7 +73,7 @@ pub struct RoleMapping {
     pub group_prefix: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum UserRole {
     Admin,
     User,
@@ -810,4 +810,59 @@ pub async fn api_update_oidc_config(
             }))
         ).into_response(),
     }
+}
+
+/// OIDC login endpoint (stub)
+pub async fn api_oidc_login(
+    State(_app_state): State<AppState>,
+) -> impl IntoResponse {
+    // TODO: Implement OIDC login flow
+    Json(serde_json::json!({
+        "status": "error",
+        "message": "OIDC login not yet implemented"
+    }))
+}
+
+/// OIDC callback endpoint (stub)
+pub async fn api_oidc_callback(
+    State(_app_state): State<AppState>,
+) -> impl IntoResponse {
+    // TODO: Implement OIDC callback handling
+    Json(serde_json::json!({
+        "status": "error",
+        "message": "OIDC callback not yet implemented"
+    }))
+}
+
+/// Validate session endpoint (stub)
+pub async fn api_validate_session(
+    State(_app_state): State<AppState>,
+) -> impl IntoResponse {
+    // TODO: Implement session validation
+    Json(serde_json::json!({
+        "status": "error",
+        "message": "Session validation not yet implemented"
+    }))
+}
+
+/// Logout endpoint (stub)
+pub async fn api_logout(
+    State(_app_state): State<AppState>,
+) -> impl IntoResponse {
+    // TODO: Implement logout
+    Json(serde_json::json!({
+        "status": "error",
+        "message": "Logout not yet implemented"
+    }))
+}
+
+/// Nginx auth endpoint (stub)
+pub async fn api_nginx_auth(
+    State(_app_state): State<AppState>,
+) -> impl IntoResponse {
+    // TODO: Implement nginx auth validation
+    Json(serde_json::json!({
+        "status": "error",
+        "message": "Nginx auth not yet implemented"
+    }))
 }

@@ -33,6 +33,7 @@ hostname = "0.3"
 
 # Image processing and encoding
 png = "0.17"
+image.workspace = true
 
 # Additional networking
 url = "2.0"
@@ -42,6 +43,29 @@ async-trait = "0.1"
 
 # Configuration
 toml = "0.8"
+
+# High-performance screen capture and input dependencies  
+x11rb = { version = "0.12", features = ["shm", "damage", "xfixes", "randr", "composite", "xtest"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.31", features = ["client", "unstable"] }
+
+# Frame protocol dependencies
+crc32fast = "1.4"
+hex = "0.4"
+
+# Video encoding for 60fps streaming
+ffmpeg-next = { version = "7.0", optional = true }
+openh264 = { version = "0.6", optional = true }
+
+# Performance utilities
+parking_lot = "0.12"
+crossbeam-channel = "0.5"
+rayon = "1.8"
+bytemuck = "1.14"
+
+# Native input control
+input = { version = "0.8", optional = true }
+evdev = { version = "0.12", optional = true }
 
 # Screen capture and input simulation (platform-specific)
 [target.'cfg(windows)'.dependencies]
@@ -64,9 +88,12 @@ tempfile.workspace = true
 serial_test.workspace = true
 
 [features]
-default = []
-x11 = ["dep:x11"]
-wayland = ["dep:xcb"]
+default = ["x264-encoder", "nvenc"]
+x11-legacy = ["dep:x11"]
+wayland-capture = []
+x264-encoder = ["dep:ffmpeg-next"]
+openh264-encoder = ["dep:openh264"]
+native-input = ["dep:input", "dep:evdev"]
 nvenc = []
 qsv = []
 videotoolbox = []

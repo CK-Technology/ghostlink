@@ -24,6 +24,9 @@ pub enum GhostLinkError {
     #[error("Encoding error: {0}")]
     Encode(String),
     
+    #[error("Protocol error: {0}")]
+    Protocol(String),
+    
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
     
@@ -32,6 +35,18 @@ pub enum GhostLinkError {
     
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
+    
+    #[error("X11 error: {0}")]
+    X11(#[from] x11rb::errors::ReplyOrIdError),
+    
+    #[error("X11 connection error: {0}")]
+    X11Connection(#[from] x11rb::errors::ConnectError),
+    
+    #[error("X11 reply error: {0}")]
+    X11Reply(#[from] x11rb::errors::ReplyError),
+    
+    #[error("X11 generic error: {0}")]
+    X11Generic(#[from] x11rb::errors::ConnectionError),
     
     #[error("{0}")]
     Other(String),
@@ -49,6 +64,9 @@ pub enum CaptureError {
     #[error("Display {display_id} not found")]
     DisplayNotFound { display_id: u32 },
     
+    #[error("Invalid display ID: {id}")]
+    InvalidDisplay { id: u32 },
+    
     #[error("Failed to capture frame: {reason}")]
     FrameCaptureFailed { reason: String },
     
@@ -60,6 +78,15 @@ pub enum CaptureError {
     
     #[error("Invalid resolution: {width}x{height}")]
     InvalidResolution { width: u32, height: u32 },
+    
+    #[error("Connection failed: {reason}")]
+    ConnectionFailed { reason: String },
+    
+    #[error("Initialization failed: {reason}")]
+    InitializationFailed { reason: String },
+    
+    #[error("Capture failed: {reason}")]
+    CaptureFailed { reason: String },
     
     #[error("System dependency missing: {dependency}")]
     MissingDependency { dependency: String },

@@ -62,7 +62,7 @@ pub enum ElevationType {
     LocalAdmin,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ElevationStatus {
     Pending,
     Approved,

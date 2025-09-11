@@ -319,6 +319,22 @@ impl ScreenCapturer for WaylandCapturer {
     fn is_healthy(&self) -> bool {
         self.is_initialized
     }
+    
+    fn get_resolution(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+    
+    async fn cleanup(&mut self) -> Result<()> {
+        info!("Cleaning up Wayland screen capturer");
+        
+        self.session_token = None;
+        self.pipewire_node_id = None;
+        self.is_initialized = false;
+        
+        // TODO: Properly close PipeWire connections and portal sessions
+        
+        Ok(())
+    }
 }
 
 /// Helper to detect the Wayland compositor type

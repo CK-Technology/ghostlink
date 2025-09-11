@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, RwLock};
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, warn, trace};
 use url::Url;
 
 use crate::agent::heartbeat::{HeartbeatManager, HeartbeatMessage};
@@ -13,6 +13,7 @@ use crate::config::ClientConfig;
 
 // pub mod auth;
 // pub mod reconnect;
+pub mod monitor_protocol;
 
 pub type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -89,6 +90,12 @@ pub enum RelayMessage {
         total_chunks: u32,
     },
     
+    // Monitor control
+    MonitorControl {
+        session_id: String,
+        data: serde_json::Value,
+    },
+    
     // Control messages
     Ping,
     Pong,
@@ -155,6 +162,10 @@ impl RelayConnection {
                 "screen_capture".to_string(),
                 "input_control".to_string(),
                 "file_transfer".to_string(),
+                "multi_monitor".to_string(),
+                "monitor_selection".to_string(),
+                "high_fps_capture".to_string(),
+                "session_recording".to_string(),
             ],
         };
         
@@ -238,7 +249,24 @@ impl RelayConnection {
             }
             RelayMessage::InputEvent { session_id, event_type, data } => {
                 debug!("Input event for session {}: {} {:?}", session_id, event_type, data);
-                // TODO: Handle input event
+                
+                // Forward to input service if available
+                // TODO: Get input service from session manager and forward event
+                if let Ok(json_str) = serde_json::to_string(&data) {
+                    trace!("Input event JSON: {}", json_str);
+                    // The actual input processing will be handled by InputService
+                }
+            }
+            RelayMessage::MonitorControl { session_id, data } => {
+                debug!("Monitor control message for session {}: {:?}", session_id, data);
+                
+                // Parse monitor control message
+                if let Ok(monitor_msg) = serde_json::from_value::<crate::connection::monitor_protocol::MonitorControlMessage>(data) {
+                    info!("Processing monitor control: {:?}", monitor_msg.message_type());
+                    // TODO: Forward to monitor manager for processing
+                } else {
+                    warn!("Failed to parse monitor control message");
+                }
             }
             RelayMessage::Ping => {
                 // Ping handled automatically by WebSocket protocol
@@ -254,10 +282,29 @@ impl RelayConnection {
         Ok(())
     }
 
-    /// Handle incoming binary messages
+    /// Handle incoming binary messages (frame data from server)
     async fn handle_binary_message(data: &[u8]) -> Result<()> {
+        use crate::capture::frame_protocol::FrameMessage;
+        
         debug!("Received binary message: {} bytes", data.len());
-        // TODO: Handle binary data (could be compressed messages, file chunks, etc.)
+        
+        // Try to parse as frame message
+        match FrameMessage::deserialize_binary(data) {
+            Ok(frame_msg) => {
+                let info = frame_msg.get_info();
+                debug!("Received frame {}: {}x{} {} bytes codec={:?}", 
+                    info.sequence, info.width, info.height, 
+                    info.data_size, info.codec);
+                
+                // TODO: Handle received frame (for future client-to-client scenarios)
+                // This would be used if this client is receiving frames from another client
+            }
+            Err(e) => {
+                debug!("Binary message is not a frame: {}", e);
+                // Could be other binary data like file transfers
+            }
+        }
+        
         Ok(())
     }
 
@@ -272,6 +319,21 @@ impl RelayConnection {
             stream.send(Message::Text(json)).await
                 .context("Failed to send message")?;
             debug!("Sent message: {:?}", message);
+        } else {
+            return Err(anyhow::anyhow!("WebSocket not connected"));
+        }
+        
+        Ok(())
+    }
+    
+    /// Send binary frame data directly (more efficient for video frames)
+    pub async fn send_binary_frame(&self, frame_data: Vec<u8>) -> Result<()> {
+        let mut stream_guard = self.ws_stream.write().await;
+        
+        if let Some(ref mut stream) = *stream_guard {
+            stream.send(Message::Binary(frame_data)).await
+                .context("Failed to send binary frame")?;
+            trace!("Sent binary frame: {} bytes", frame_data.len());
         } else {
             return Err(anyhow::anyhow!("WebSocket not connected"));
         }

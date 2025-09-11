@@ -758,3 +758,25 @@ pub async fn api_get_vpn_peers(
     let peers = app_state.device_manager.vpn_manager.get_peers().await;
     Json(peers)
 }
+
+/// Enable Tailscale (stub)
+pub async fn api_enable_tailscale(
+    State(_app_state): State<AppState>,
+) -> impl IntoResponse {
+    // TODO: Implement Tailscale integration
+    Json(serde_json::json!({
+        "status": "error",
+        "message": "Tailscale integration not yet implemented"
+    }))
+}
+
+/// Get WireGuard config (stub)
+pub async fn api_get_wireguard_config(
+    State(_app_state): State<AppState>,
+) -> impl IntoResponse {
+    // TODO: Implement WireGuard config generation
+    Json(serde_json::json!({
+        "status": "error",
+        "message": "WireGuard config generation not yet implemented"
+    }))
+}

@@ -15,28 +15,28 @@ pub fn Dashboard() -> impl IntoView {
     // Load initial data
     create_effect(move |_| {
         spawn_local(async move {
-            set_loading(true);
+            set_loading.set(true);
             
             match ApiClient::get_devices().await {
                 Ok(device_list) => {
-                    set_devices(device_list);
-                    set_error(None);
+                    set_devices.set(device_list);
+                    set_error.set(None);
                 }
                 Err(e) => {
-                    set_error(Some(format!("Failed to load devices: {}", e)));
+                    set_error.set(Some(format!("Failed to load devices: {}", e)));
                 }
             }
 
             match ApiClient::get_stats().await {
                 Ok(server_stats) => {
-                    set_stats(Some(server_stats));
+                    set_stats.set(Some(server_stats));
                 }
                 Err(e) => {
                     logging::log!("Failed to load stats: {}", e);
                 }
             }
             
-            set_loading(false);
+            set_loading.set(false);
         });
     });
 
@@ -46,10 +46,10 @@ pub fn Dashboard() -> impl IntoView {
             move || {
                 spawn_local(async move {
                     if let Ok(device_list) = ApiClient::get_devices().await {
-                        set_devices(device_list);
+                        set_devices.set(device_list);
                     }
                     if let Ok(server_stats) = ApiClient::get_stats().await {
-                        set_stats(Some(server_stats));
+                        set_stats.set(Some(server_stats));
                     }
                 });
             },
@@ -97,14 +97,14 @@ pub fn Dashboard() -> impl IntoView {
                                 class="btn btn-outline-primary btn-sm"
                                 on:click=move |_| {
                                     spawn_local(async move {
-                                        set_loading(true);
+                                        set_loading.set(true);
                                         if let Ok(device_list) = ApiClient::get_devices().await {
-                                            set_devices(device_list);
+                                            set_devices.set(device_list);
                                         }
                                         if let Ok(server_stats) = ApiClient::get_stats().await {
-                                            set_stats(Some(server_stats));
+                                            set_stats.set(Some(server_stats));
                                         }
-                                        set_loading(false);
+                                        set_loading.set(false);
                                     });
                                 }
                             >
@@ -190,7 +190,7 @@ pub fn Dashboard() -> impl IntoView {
                                             placeholder="Search by name, hostname, or platform..."
                                             prop:value=move || search_filter.get()
                                             on:input=move |ev| {
-                                                set_search_filter(event_target_value(&ev));
+                                                set_search_filter.set(event_target_value(&ev));
                                             }
                                         />
                                     </div>
@@ -203,7 +203,7 @@ pub fn Dashboard() -> impl IntoView {
                                         class="form-select"
                                         id="platform"
                                         on:change=move |ev| {
-                                            set_platform_filter(event_target_value(&ev));
+                                            set_platform_filter.set(event_target_value(&ev));
                                         }
                                     >
                                         <option value="all">"All Platforms"</option>
@@ -239,7 +239,7 @@ pub fn Dashboard() -> impl IntoView {
                                     <button 
                                         type="button" 
                                         class="btn-close ms-auto" 
-                                        on:click=move |_| set_error(None)
+                                        on:click=move |_| set_error.set(None)
                                     ></button>
                                 </div>
                             </div>
@@ -290,8 +290,8 @@ pub fn Dashboard() -> impl IntoView {
                                             <button 
                                                 class="btn btn-outline-primary"
                                                 on:click=move |_| {
-                                                    set_search_filter(String::new());
-                                                    set_platform_filter(String::new());
+                                                    set_search_filter.set(String::new());
+                                                    set_platform_filter.set(String::new());
                                                 }
                                             >
                                                 <i class="bi bi-arrow-clockwise me-1"></i>
@@ -362,7 +362,7 @@ fn DeviceCard(device: Device) -> impl IntoView {
         let device_id = device_id.clone();
         spawn_local(async move {
             if let Ok(device_sessions) = ApiClient::get_device_sessions(&device_id).await {
-                set_sessions(device_sessions);
+                set_sessions.set(device_sessions);
             }
         });
     });
