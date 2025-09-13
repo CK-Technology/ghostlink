@@ -35,7 +35,7 @@ pub struct InputService {
     /// Input event sender (for external use)
     event_sender: mpsc::Sender<InputEvent>,
     /// Service running state
-    is_running: AtomicBool,
+    is_running: Arc<AtomicBool>,
     /// Input processing task handle
     processing_task: Arc<RwLock<Option<JoinHandle<()>>>>,
     /// Statistics tracking
@@ -111,7 +111,7 @@ impl InputService {
             injector,
             event_receiver: Arc::new(RwLock::new(Some(event_receiver))),
             event_sender,
-            is_running: AtomicBool::new(false),
+            is_running: Arc::new(AtomicBool::new(false)),
             processing_task: Arc::new(RwLock::new(None)),
             stats: Arc::new(ParkingRwLock::new(InputStats::default())),
             connection,

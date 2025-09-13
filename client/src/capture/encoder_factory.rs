@@ -10,7 +10,7 @@ use crate::capture::{
 use crate::error::{GhostLinkError, Result};
 
 /// Encoder preferences for different use cases
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncoderPreference {
     /// Maximum performance (lowest latency, highest quality)
     MaxPerformance,
@@ -80,7 +80,7 @@ impl EncoderFactory {
         
         // Fallback to basic software encoder
         warn!("Falling back to basic software encoder");
-        let encoder = SoftwareEncoder::new();
+        let encoder = SoftwareEncoder::new().await?;
         Ok(VideoEncoderEnum::Software(encoder))
     }
     
@@ -115,7 +115,7 @@ impl EncoderFactory {
         
         // Fallback
         warn!("Falling back to basic software encoder");
-        let encoder = SoftwareEncoder::new();
+        let encoder = SoftwareEncoder::new().await?;
         Ok(VideoEncoderEnum::Software(encoder))
     }
     
@@ -151,7 +151,7 @@ impl EncoderFactory {
         
         // Fallback
         warn!("Falling back to basic software encoder");
-        let encoder = SoftwareEncoder::new();
+        let encoder = SoftwareEncoder::new().await?;
         Ok(VideoEncoderEnum::Software(encoder))
     }
     
@@ -167,7 +167,7 @@ impl EncoderFactory {
         
         // Fallback to basic encoder
         warn!("Using basic software encoder for compatibility");
-        let encoder = SoftwareEncoder::new();
+        let encoder = SoftwareEncoder::new().await?;
         Ok(VideoEncoderEnum::Software(encoder))
     }
     

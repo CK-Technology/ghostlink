@@ -25,7 +25,7 @@ pub struct DirectConnectManager {
     relay_tx: mpsc::UnboundedSender<RelayMessage>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientInfo {
     pub id: String,
     pub password: String,

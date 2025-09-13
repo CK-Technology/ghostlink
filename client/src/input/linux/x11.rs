@@ -13,6 +13,11 @@ pub struct X11InputHandler {
     display: Option<*mut std::ffi::c_void>, // Would be Display* in real implementation
 }
 
+// SAFETY: In this implementation, display is always None and we don't actually use raw pointers
+// In a full implementation, proper synchronization would be needed for the Display* pointer
+unsafe impl Send for X11InputHandler {}
+unsafe impl Sync for X11InputHandler {}
+
 impl X11InputHandler {
     pub async fn new() -> Result<Self> {
         Ok(Self {

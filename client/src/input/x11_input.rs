@@ -284,7 +284,7 @@ impl X11InputInjector {
     
     /// Convert a character to keycode and modifiers
     /// This is a simplified mapping - a full implementation would query the keyboard layout
-    fn char_to_keycode(&self, ch: char) -> Result<(u8, KeyModifiers)> {
+    pub fn char_to_keycode(&self, ch: char) -> Result<(u8, KeyModifiers)> {
         let mut modifiers = KeyModifiers::default();
         
         let keycode = match ch {

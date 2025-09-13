@@ -13,7 +13,7 @@ use crate::config::ClientConfig;
 
 // pub mod auth;
 // pub mod reconnect;
-pub mod monitor_protocol;
+pub mod p2p;\npub mod hybrid;\npub mod monitor_protocol;\n\npub use p2p::{P2PManager, P2PConnectionInfo, NATType};\npub use hybrid::{HybridConnectionManager, ConnectionType, ConnectionSettings};
 
 pub type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -96,6 +96,25 @@ pub enum RelayMessage {
         data: serde_json::Value,
     },
     
+    
+    // P2P connection exchange (RustDesk-style)
+    P2PHandshake {
+        session_id: String,
+        connection_info: P2PConnectionInfo,
+    },
+    
+    P2PResponse {
+        session_id: String,
+        accepted: bool,
+        connection_info: Option<P2PConnectionInfo>,
+    },
+    
+    // Clipboard sync (RustDesk feature)
+    ClipboardSync {
+        session_id: String,
+        content: String,
+        content_type: String,
+    },
     // Control messages
     Ping,
     Pong,

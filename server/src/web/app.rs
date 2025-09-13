@@ -2,6 +2,7 @@ use leptos::*;
 use leptos_meta::*;
 use leptos_router::*;
 use crate::web::sessions::{SessionsPage, SessionViewer};
+use crate::web::device_discovery::DeviceDiscovery;
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -26,6 +27,7 @@ pub fn App() -> impl IntoView {
                 <Route path="/" view=MainLayout>
                     <Route path="" view=crate::web::dashboard::Dashboard/>
                     <Route path="/sessions" view=SessionsPage/>
+                    <Route path="/device-discovery" view=DeviceDiscovery/>
                     <Route path="/settings" view=Settings/>
                 </Route>
                 <Route path="/session/:id" view=SessionViewer/>
@@ -304,6 +306,16 @@ fn Sidebar() -> impl IntoView {
                             </li>
                             <li class="nav-item">
                                 <A 
+                                    href="/device-discovery" 
+                                    class="nav-link text-light d-flex align-items-center py-2 px-3 rounded"
+                                    active_class="active bg-primary"
+                                >
+                                    <i class="bi bi-radar me-3"></i>
+                                    "Device Discovery"
+                                </A>
+                            </li>
+                            <li class="nav-item">
+                                <A 
                                     href="/settings" 
                                     class="nav-link text-light d-flex align-items-center py-2 px-3 rounded"
                                     active_class="active bg-primary"
@@ -318,10 +330,13 @@ fn Sidebar() -> impl IntoView {
                     <div class="mb-4">
                         <h6 class="text-uppercase text-light opacity-75 fw-bold mb-3 small">"Quick Actions"</h6>
                         <div class="d-grid gap-2">
-                            <button class="btn btn-outline-light btn-sm">
+                            <A 
+                                href="/device-discovery"
+                                class="btn btn-outline-light btn-sm"
+                            >
                                 <i class="bi bi-plus-circle me-2"></i>
                                 "Add Device"
-                            </button>
+                            </A>
                             <button class="btn btn-outline-secondary btn-sm">
                                 <i class="bi bi-collection me-2"></i>
                                 "Device Groups"

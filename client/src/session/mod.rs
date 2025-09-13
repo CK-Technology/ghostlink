@@ -1,4 +1,4 @@
-use anyhow::Result;
+pub mod window;\n\nuse anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -6,7 +6,7 @@ use tracing::{error, info, warn};
 
 use crate::capture::ScreenCapture;
 use crate::config::ClientConfig;
-use crate::input::InputController;
+use crate::input::InputController;\n\npub use window::{SessionWindow, SessionTab};
 
 // pub mod backstage;
 // pub mod console;

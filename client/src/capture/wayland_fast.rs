@@ -371,4 +371,5 @@ impl ScreenCapturer for WaylandFastCapturer {
         self.is_initialized = false;
         Ok(())
     }
+
 }

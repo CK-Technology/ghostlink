@@ -126,15 +126,17 @@ impl FrameHeader {
     
     /// Validate header magic and version
     pub fn validate(&self) -> Result<()> {
-        if self.magic != FRAME_HEADER_MAGIC {
+        let magic = self.magic;
+        if magic != FRAME_HEADER_MAGIC {
             return Err(GhostLinkError::Protocol(
-                format!("Invalid frame header magic: 0x{:08X}", self.magic)
+                format!("Invalid frame header magic: 0x{:08X}", magic)
             ));
         }
         
-        if self.version != PROTOCOL_VERSION {
+        let version = self.version;
+        if version != PROTOCOL_VERSION {
             return Err(GhostLinkError::Protocol(
-                format!("Unsupported protocol version: {}", self.version)
+                format!("Unsupported protocol version: {}", version)
             ));
         }
         

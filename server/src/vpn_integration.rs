@@ -459,7 +459,7 @@ impl VpnManager {
         let serve_path = if config.https {
             format!("https://{}:{}{}", config.hostname, config.port, config.path)
         } else {
-            format("http://{}:{}{}", config.hostname, config.port, config.path)
+            format!("http://{}:{}{}", config.hostname, config.port, config.path)
         };
         
         let output = Command::new("tailscale")

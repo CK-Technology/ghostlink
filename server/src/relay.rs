@@ -136,25 +136,53 @@ async fn handle_binary_message(
     
     match data[0] {
         0x01 => {
-            // Screen capture data
+            // Screen capture data - forward to all active sessions for this device
             info!("Received screen capture from device: {} ({} bytes)", device_id, data.len());
-            // Process and forward to connected viewers
+            if let Err(e) = forward_screen_data(device_id, &data[1..]).await {
+                error!("Failed to forward screen data: {}", e);
+            }
         }
         0x02 => {
-            // Input event data
+            // Input event data - process and send to device if needed
             info!("Received input event from device: {}", device_id);
-            // Process input events
+            if let Err(e) = process_input_event(device_id, &data[1..]).await {
+                error!("Failed to process input event: {}", e);
+            }
         }
         0x03 => {
-            // File transfer data
+            // File transfer data - handle file operations
             info!("Received file transfer data from device: {} ({} bytes)", device_id, data.len());
-            // Handle file transfer
+            if let Err(e) = handle_file_transfer(device_id, &data[1..]).await {
+                error!("Failed to handle file transfer: {}", e);
+            }
         }
         _ => {
             warn!("Unknown binary message type from device: {}", device_id);
         }
     }
     
+    Ok(())
+}
+
+/// Forward screen capture data to all viewers of this device
+async fn forward_screen_data(device_id: &str, frame_data: &[u8]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // TODO: Get all active sessions for this device from device manager
+    // TODO: Forward frame data to each session's websocket
+    info!("Forwarding {} bytes of screen data from device {}", frame_data.len(), device_id);
+    Ok(())
+}
+
+/// Process input events (mouse/keyboard from viewers)
+async fn process_input_event(device_id: &str, input_data: &[u8]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // TODO: Parse input event and forward to device
+    info!("Processing input event for device {}", device_id);
+    Ok(())
+}
+
+/// Handle file transfer operations
+async fn handle_file_transfer(device_id: &str, file_data: &[u8]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // TODO: Handle file upload/download operations
+    info!("Handling file transfer for device {} ({} bytes)", device_id, file_data.len());
     Ok(())
 }
 

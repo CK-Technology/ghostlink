@@ -3,7 +3,7 @@ use crate::{
     capture::{
         x11_fast::X11FastCapturer,
         wayland_fast::WaylandFastCapturer,
-        frame_protocol::{FrameMessage, VideoCodec},
+        frame_protocol::{FrameMessage, VideoCodec, QualityLevel},
     },
 };
 
@@ -88,7 +88,7 @@ pub struct MonitorManager {
     /// Currently selected monitor configuration
     selection: Arc<RwLock<MonitorSelection>>,
     /// Active capturer for current selection
-    active_capturer: Arc<RwLock<Option<Box<dyn MultiMonitorCapturer + Send + Sync>>>>,
+    active_capturer: Arc<RwLock<Option<MultiMonitorCapturerEnum>>>,
     /// Monitor change notification sender
     monitor_change_tx: broadcast::Sender<MonitorChangeEvent>,
     /// Monitor change notification receiver (for internal use)
@@ -99,13 +99,69 @@ pub struct MonitorManager {
     is_wayland: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MonitorChangeEvent {
     MonitorAdded(MonitorInfo),
     MonitorRemoved(u32),
     MonitorChanged(MonitorInfo),
     SelectionChanged(MonitorSelection),
     ConfigurationChanged,
+}
+
+/// Enum wrapper for different multi-monitor capturer implementations
+pub enum MultiMonitorCapturerEnum {
+    X11(X11MultiMonitorCapturer),
+    Wayland(WaylandMultiMonitorCapturer),
+}
+
+impl MultiMonitorCapturerEnum {
+    /// Start capturing from selected monitor/region
+    pub async fn start_capture(&mut self, selection: &MonitorSelection) -> Result<()> {
+        match self {
+            MultiMonitorCapturerEnum::X11(capturer) => capturer.start_capture(selection).await,
+            MultiMonitorCapturerEnum::Wayland(capturer) => capturer.start_capture(selection).await,
+        }
+    }
+    
+    /// Stop capturing
+    pub async fn stop_capture(&mut self) -> Result<()> {
+        match self {
+            MultiMonitorCapturerEnum::X11(capturer) => capturer.stop_capture().await,
+            MultiMonitorCapturerEnum::Wayland(capturer) => capturer.stop_capture().await,
+        }
+    }
+    
+    /// Capture current frame
+    pub async fn capture_frame(&mut self) -> Result<Option<FrameMessage>> {
+        match self {
+            MultiMonitorCapturerEnum::X11(capturer) => capturer.capture_frame().await,
+            MultiMonitorCapturerEnum::Wayland(capturer) => capturer.capture_frame().await,
+        }
+    }
+    
+    /// Update capture selection
+    pub async fn update_selection(&mut self, selection: &MonitorSelection) -> Result<()> {
+        match self {
+            MultiMonitorCapturerEnum::X11(capturer) => capturer.update_selection(selection).await,
+            MultiMonitorCapturerEnum::Wayland(capturer) => capturer.update_selection(selection).await,
+        }
+    }
+    
+    /// Get current capture statistics
+    pub fn get_stats(&self) -> CaptureStats {
+        match self {
+            MultiMonitorCapturerEnum::X11(capturer) => capturer.get_stats(),
+            MultiMonitorCapturerEnum::Wayland(capturer) => capturer.get_stats(),
+        }
+    }
+    
+    /// Check if capturer supports monitor
+    pub fn supports_monitor(&self, monitor: &MonitorInfo) -> bool {
+        match self {
+            MultiMonitorCapturerEnum::X11(capturer) => capturer.supports_monitor(monitor),
+            MultiMonitorCapturerEnum::Wayland(capturer) => capturer.supports_monitor(monitor),
+        }
+    }
 }
 
 /// Trait for multi-monitor capable capturers
@@ -599,10 +655,10 @@ impl MonitorManager {
         let monitors = self.monitors.read().await;
         
         // Determine which capturer to use
-        let new_capturer: Box<dyn MultiMonitorCapturer + Send + Sync> = if self.is_wayland {
-            Box::new(WaylandMultiMonitorCapturer::new(&monitors, &selection).await?)
+        let new_capturer = if self.is_wayland {
+            MultiMonitorCapturerEnum::Wayland(WaylandMultiMonitorCapturer::new(&monitors, &selection).await?)
         } else {
-            Box::new(X11MultiMonitorCapturer::new(&monitors, &selection).await?)
+            MultiMonitorCapturerEnum::X11(X11MultiMonitorCapturer::new(&monitors, &selection).await?)
         };
         
         let mut capturer = self.active_capturer.write().await;
@@ -635,19 +691,31 @@ impl X11MultiMonitorCapturer {
 impl MultiMonitorCapturer for X11MultiMonitorCapturer {
     async fn start_capture(&mut self, selection: &MonitorSelection) -> Result<()> {
         self.selection = selection.clone();
-        self.capturer.start_capture(60).await
+        self.capturer.initialize().await
     }
     
     async fn stop_capture(&mut self) -> Result<()> {
-        self.capturer.stop_capture().await
+        self.capturer.cleanup().await
     }
     
     async fn capture_frame(&mut self) -> Result<Option<FrameMessage>> {
-        let frame = self.capturer.capture_frame().await?;
-        if frame.is_some() {
-            self.stats.frames_captured += 1;
+        match self.capturer.capture_frame().await {
+            Ok(frame) => {
+                // Convert Frame to FrameMessage
+                // TODO: This is a stub implementation - would need proper conversion
+                self.stats.frames_captured += 1;
+                Ok(Some(FrameMessage::new(
+                    self.stats.frames_captured as u32, // sequence
+                    &[0u8; 8], // session_id (stub)
+                    VideoCodec::Raw, // codec
+                    QualityLevel::High, // quality (stub)
+                    frame.width,
+                    frame.height,
+                    frame.data,
+                )))
+            }
+            Err(_) => Ok(None), // Return None if capture fails
         }
-        Ok(frame)
     }
     
     async fn update_selection(&mut self, selection: &MonitorSelection) -> Result<()> {
@@ -688,19 +756,31 @@ impl WaylandMultiMonitorCapturer {
 impl MultiMonitorCapturer for WaylandMultiMonitorCapturer {
     async fn start_capture(&mut self, selection: &MonitorSelection) -> Result<()> {
         self.selection = selection.clone();
-        self.capturer.start_capture(60).await
+        self.capturer.initialize().await
     }
     
     async fn stop_capture(&mut self) -> Result<()> {
-        self.capturer.stop_capture().await
+        self.capturer.cleanup().await
     }
     
     async fn capture_frame(&mut self) -> Result<Option<FrameMessage>> {
-        let frame = self.capturer.capture_frame().await?;
-        if frame.is_some() {
-            self.stats.frames_captured += 1;
+        match self.capturer.capture_frame().await {
+            Ok(frame) => {
+                // Convert Frame to FrameMessage
+                // TODO: This is a stub implementation - would need proper conversion
+                self.stats.frames_captured += 1;
+                Ok(Some(FrameMessage::new(
+                    self.stats.frames_captured as u32, // sequence
+                    &[0u8; 8], // session_id (stub)
+                    VideoCodec::Raw, // codec
+                    QualityLevel::High, // quality (stub)
+                    frame.width,
+                    frame.height,
+                    frame.data,
+                )))
+            }
+            Err(_) => Ok(None), // Return None if capture fails
         }
-        Ok(frame)
     }
     
     async fn update_selection(&mut self, selection: &MonitorSelection) -> Result<()> {

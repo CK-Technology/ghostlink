@@ -128,7 +128,7 @@ impl NvencEncoder {
     pub async fn new() -> Result<Self> {
         // Check if NVIDIA GPU is available
         // Initialize NVENC
-        Err(anyhow::anyhow!("NVENC not implemented yet"))
+        Err(GhostLinkError::Other("NVENC not implemented yet".to_string()))
     }
 }
 

@@ -39,9 +39,9 @@ pub struct FrameStreamingService {
     /// Current encoder preference
     encoder_preference: Arc<RwLock<EncoderPreference>>,
     /// Frame sequence counter
-    sequence_counter: AtomicU32,
+    sequence_counter: Arc<AtomicU32>,
     /// Streaming state
-    is_streaming: AtomicBool,
+    is_streaming: Arc<AtomicBool>,
     /// Quality level
     current_quality: Arc<ParkingRwLock<QualityLevel>>,
     /// Frame statistics
@@ -74,8 +74,8 @@ impl FrameStreamingService {
             capturer,
             encoder: Arc::new(RwLock::new(None)),
             encoder_preference: Arc::new(RwLock::new(preference)),
-            sequence_counter: AtomicU32::new(0),
-            is_streaming: AtomicBool::new(false),
+            sequence_counter: Arc::new(AtomicU32::new(0)),
+            is_streaming: Arc::new(AtomicBool::new(false)),
             current_quality: Arc::new(ParkingRwLock::new(QualityLevel::High)),
             stats: Arc::new(ParkingRwLock::new(FrameStats::default())),
             stream_task: Arc::new(Mutex::new(None)),
@@ -103,20 +103,20 @@ impl FrameStreamingService {
         
         // Create best encoder for streaming
         let preference = *self.encoder_preference.read().await;
-        let encoder = EncoderFactory::create_streaming_encoder(bitrate, TARGET_FPS).await?;
+        let mut encoder = EncoderFactory::create_streaming_encoder(bitrate, TARGET_FPS).await?;
         
         // Initialize encoder
-        if let VideoEncoderEnum::Software(ref mut sw_encoder) = &encoder {
+        if let VideoEncoderEnum::Software(ref mut sw_encoder) = &mut encoder {
             sw_encoder.initialize(width, height, TARGET_FPS).await?;
-        } else if let VideoEncoderEnum::H264(ref mut h264_encoder) = &encoder {
+        } else if let VideoEncoderEnum::H264(ref mut h264_encoder) = &mut encoder {
             h264_encoder.initialize(width, height, TARGET_FPS).await?;
-        } else if let VideoEncoderEnum::Hevc(ref mut hevc_encoder) = &encoder {
+        } else if let VideoEncoderEnum::Hevc(ref mut hevc_encoder) = &mut encoder {
             hevc_encoder.initialize(width, height, TARGET_FPS).await?;
-        } else if let VideoEncoderEnum::NvencH264(ref mut nvenc_encoder) = &encoder {
+        } else if let VideoEncoderEnum::NvencH264(ref mut nvenc_encoder) = &mut encoder {
             nvenc_encoder.initialize(width, height, TARGET_FPS).await?;
-        } else if let VideoEncoderEnum::NvencH265(ref mut nvenc_encoder) = &encoder {
+        } else if let VideoEncoderEnum::NvencH265(ref mut nvenc_encoder) = &mut encoder {
             nvenc_encoder.initialize(width, height, TARGET_FPS).await?;
-        } else if let VideoEncoderEnum::NvencAV1(ref mut nvenc_encoder) = &encoder {
+        } else if let VideoEncoderEnum::NvencAV1(ref mut nvenc_encoder) = &mut encoder {
             nvenc_encoder.initialize(width, height, TARGET_FPS).await?;
         }
         

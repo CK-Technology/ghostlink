@@ -19,6 +19,7 @@ use tracing::info;
 
 mod api;
 mod config;
+mod database;
 mod models;
 mod relay;
 mod web;
@@ -28,6 +29,7 @@ mod branding;
 mod direct_connect;
 mod vpn_integration;
 mod auth {
+    pub mod jwt;
     pub mod oidc;
 }
 mod pam;
@@ -96,6 +98,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Build API routes
     let api_routes = Router::new()
+        // Authentication routes (public)
+        .route("/api/auth/login", post(auth::jwt::endpoints::login))
+        .route("/api/auth/refresh", post(auth::jwt::endpoints::refresh))
+        .route("/api/auth/logout", post(auth::jwt::endpoints::logout))
+        .route("/api/auth/me", get(auth::jwt::endpoints::me))
+        
+        // Device management routes (protected)
         .route("/api/devices", get(api::api_get_devices))
         .route("/api/devices/:id/sessions", get(api::api_get_device_sessions))
         .route("/api/devices/:id/sessions", post(api::api_create_session))

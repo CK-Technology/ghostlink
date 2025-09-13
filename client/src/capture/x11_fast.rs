@@ -425,4 +425,5 @@ impl ScreenCapturer for X11FastCapturer {
         self.is_initialized = false;
         Ok(())
     }
+
 }

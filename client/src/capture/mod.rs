@@ -10,6 +10,9 @@ use crate::{
     error::{Result, CaptureError, GhostLinkError},
 };
 
+use frame_protocol::{FrameMessage, VideoCodec};
+use monitor_manager::MonitorManager;
+
 #[cfg(target_os = "linux")]
 pub mod wayland;
 #[cfg(target_os = "linux")]
@@ -30,8 +33,8 @@ pub mod h264_encoder;
 pub mod hevc_encoder;
 pub mod nvenc_encoder;
 pub mod encoder_factory;
-pub mod frame_protocol;
 pub mod frame_streaming;
+pub mod frame_protocol;
 pub mod monitor_manager;
 
 /// Cross-platform screen capture abstraction
@@ -305,7 +308,10 @@ impl ScreenCapture {
                             match encoder.encode_frame(&frame).await {
                                 Ok(encoded_data) => {
                                     debug!("Frame encoded: {} bytes", encoded_data.len());
-                                    // TODO: Send encoded data via websocket/relay
+                                    // Send encoded data via websocket/relay
+                                    if let Err(e) = Self::send_frame_to_relay(encoded_data).await {
+                                        error!("Failed to send frame to relay: {}", e);
+                                    }
                                 },
                                 Err(e) => {
                                     error!("Failed to encode frame: {}", e);
@@ -378,6 +384,21 @@ impl ScreenCapture {
     pub async fn get_encoder_info(&self) -> Option<EncoderInfo> {
         let encoder_guard = self.encoder.read().await;
         encoder_guard.as_ref().map(|e| e.get_encoder_info())
+    }
+
+    /// Send frame data to relay server
+    async fn send_frame_to_relay(frame_data: Vec<u8>) -> Result<()> {
+        // TODO: Integrate with actual WebSocket relay client
+        // For now, this is a placeholder that logs the frame size
+        trace!("Sending frame to relay: {} bytes", frame_data.len());
+        
+        // In a real implementation, this would:
+        // 1. Get the WebSocket connection to relay server
+        // 2. Create a FrameMessage with proper headers
+        // 3. Send via WebSocket
+        // 4. Handle connection failures and reconnection
+        
+        Ok(())
     }
 }
 

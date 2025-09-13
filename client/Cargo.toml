@@ -67,6 +67,16 @@ bytemuck = "1.14"
 input = { version = "0.8", optional = true }
 evdev = { version = "0.12", optional = true }
 
+# Desktop GUI (viewer mode)
+tauri = { version = "1.5", features = ["shell-open", "fs-all", "window-all"], optional = true }
+pixels = { version = "0.13", optional = true }
+winit = { version = "0.29", optional = true }
+rfd = { version = "0.14", optional = true }  # File dialogs
+rdev = { version = "0.4", optional = true }  # Cross-platform input simulation
+arboard = { version = "3.3", optional = true }  # Clipboard
+dirs = "5.0"
+notify = { version = "6.1", optional = true }  # File watching
+
 # Screen capture and input simulation (platform-specific)
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.52", features = [
@@ -97,3 +107,6 @@ native-input = ["dep:input", "dep:evdev"]
 nvenc = []
 qsv = []
 videotoolbox = []
+
+# Desktop viewer mode
+viewer = ["dep:tauri", "dep:pixels", "dep:winit", "dep:rfd", "dep:rdev", "dep:arboard", "dep:notify"]
