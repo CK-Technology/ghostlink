@@ -13,7 +13,12 @@ use crate::config::ClientConfig;
 
 // pub mod auth;
 // pub mod reconnect;
-pub mod p2p;\npub mod hybrid;\npub mod monitor_protocol;\n\npub use p2p::{P2PManager, P2PConnectionInfo, NATType};\npub use hybrid::{HybridConnectionManager, ConnectionType, ConnectionSettings};
+pub mod p2p;
+pub mod hybrid;
+pub mod monitor_protocol;
+
+pub use p2p::{P2PManager, P2PConnectionInfo, NATType};
+pub use hybrid::{HybridConnectionManager, ConnectionType, ConnectionSettings};
 
 pub type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 

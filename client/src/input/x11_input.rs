@@ -67,8 +67,8 @@ impl X11InputInjector {
         let root_window = connection.setup().roots[screen].root;
         
         // Check if XTEST extension is available
-        let xtest_version = connection.xtest_get_version(2, 2)?;
-        info!("XTEST extension available: {}.{}", 
+        let xtest_version = connection.xtest_get_version(2, 2)?.reply()?;
+        info!("XTEST extension available: {}.{}",
             xtest_version.major_version, xtest_version.minor_version);
         
         Ok(Self {

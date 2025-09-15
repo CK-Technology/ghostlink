@@ -72,7 +72,9 @@ impl HevcEncoder {
             .or_else(|| ffmpeg::encoder::find(ffmpeg::codec::Id::H265))
             .ok_or_else(|| GhostLinkError::Other("H.265/HEVC encoder not available".to_string()))?;
         
-        let mut encoder = ffmpeg::encoder::video::Video::new(codec)
+        let mut encoder = ffmpeg::codec::Context::new()
+            .encoder()
+            .video()
             .map_err(|e| GhostLinkError::Other(format!("Failed to create HEVC encoder: {}", e)))?;
         
         // Configure encoder for real-time performance with better compression
@@ -239,7 +241,7 @@ impl VideoEncoder for HevcEncoder {
         Ok(())
     }
 
-    async fn encode_frame(&self, frame: &Frame) -> Result<Vec<u8>> {
+    async fn encode_frame(&mut self, frame: &Frame) -> Result<Vec<u8>> {
         if !self.is_initialized {
             return Err(GhostLinkError::Other("Encoder not initialized".to_string()));
         }
@@ -253,19 +255,18 @@ impl VideoEncoder for HevcEncoder {
             return Err(GhostLinkError::Other("Frame size mismatch".to_string()));
         }
 
-        // Cast away const for frame counting
-        let mut_self = unsafe { &mut *(self as *const _ as *mut _) };
-        mut_self.frame_count += 1;
+        // Update frame count
+        self.frame_count += 1;
 
         // Encode the frame
         #[cfg(feature = "x264-encoder")]
         {
-            mut_self.encode_frame_ffmpeg(frame)
+            self.encode_frame_ffmpeg(frame)
         }
-        
+
         #[cfg(not(feature = "x264-encoder"))]
         {
-            mut_self.encode_frame_fallback(frame)
+            self.encode_frame_fallback(frame)
         }
     }
 

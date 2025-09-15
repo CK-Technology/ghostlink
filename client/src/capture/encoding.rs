@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use crate::error::{GhostLinkError, Result};
 use tracing::{info, warn};
 
@@ -87,7 +88,7 @@ impl VideoEncoder for SoftwareEncoder {
         Ok(())
     }
     
-    async fn encode_frame(&self, frame: &Frame) -> Result<Vec<u8>> {
+    async fn encode_frame(&mut self, frame: &Frame) -> Result<Vec<u8>> {
         if !self.is_initialized {
             return Err(GhostLinkError::Encode("Encoder not initialized".to_string()));
         }
@@ -142,7 +143,7 @@ impl QsvEncoder {
     pub async fn new() -> Result<Self> {
         // Check if Intel GPU is available
         // Initialize Quick Sync Video
-        Err(anyhow::anyhow!("QSV not implemented yet"))
+        Err(GhostLinkError::Other("QSV not implemented yet".to_string()))
     }
 }
 
@@ -155,6 +156,6 @@ pub struct VideoToolboxEncoder {
 impl VideoToolboxEncoder {
     pub async fn new() -> Result<Self> {
         // Initialize VideoToolbox
-        Err(anyhow::anyhow!("VideoToolbox not implemented yet"))
+        Err(GhostLinkError::Other("VideoToolbox not implemented yet".to_string()))
     }
 }

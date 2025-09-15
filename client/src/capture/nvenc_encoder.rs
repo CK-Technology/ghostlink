@@ -171,7 +171,9 @@ impl NvencEncoder {
         let codec = ffmpeg::encoder::find_by_name(encoder_name)
             .ok_or_else(|| GhostLinkError::Other(format!("NVENC encoder {} not available", encoder_name)))?;
         
-        let mut encoder = ffmpeg::encoder::video::Video::new(codec)
+        let mut encoder = ffmpeg::codec::Context::new()
+            .encoder()
+            .video()
             .map_err(|e| GhostLinkError::Other(format!("Failed to create NVENC encoder: {}", e)))?;
         
         // Configure for maximum performance
@@ -363,7 +365,7 @@ impl VideoEncoder for NvencEncoder {
         Ok(())
     }
 
-    async fn encode_frame(&self, frame: &Frame) -> Result<Vec<u8>> {
+    async fn encode_frame(&mut self, frame: &Frame) -> Result<Vec<u8>> {
         if !self.is_initialized {
             return Err(GhostLinkError::Other("NVENC encoder not initialized".to_string()));
         }
@@ -377,13 +379,12 @@ impl VideoEncoder for NvencEncoder {
             return Err(GhostLinkError::Other("Frame size mismatch".to_string()));
         }
 
-        // Cast for frame counting
-        let mut_self = unsafe { &mut *(self as *const _ as *mut _) };
-        mut_self.frame_count += 1;
+        // Update frame count
+        self.frame_count += 1;
 
         #[cfg(feature = "nvenc")]
         {
-            mut_self.encode_frame_nvenc(frame)
+            self.encode_frame_nvenc(frame)
         }
         
         #[cfg(not(feature = "nvenc"))]

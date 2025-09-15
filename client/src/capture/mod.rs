@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{RwLock, Mutex};
 use tokio::time::{interval, Duration};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, warn, trace};
 
 use crate::{
     session::SessionType,
@@ -62,6 +62,145 @@ pub enum ScreenCapturerEnum {
     MacOS(macos::CoreGraphicsCapturer),
 }
 
+#[async_trait]
+impl ScreenCapturer for ScreenCapturerEnum {
+    async fn initialize(&mut self) -> Result<()> {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::Wayland(capturer) => capturer.initialize().await,
+            #[cfg(target_os = "linux")]
+            Self::X11(capturer) => capturer.initialize().await,
+            #[cfg(target_os = "linux")]
+            Self::X11Fast(capturer) => capturer.initialize().await,
+            #[cfg(target_os = "linux")]
+            Self::WaylandFast(capturer) => capturer.initialize().await,
+            #[cfg(target_os = "windows")]
+            Self::Windows(capturer) => capturer.initialize().await,
+            #[cfg(target_os = "macos")]
+            Self::MacOS(capturer) => capturer.initialize().await,
+        }
+    }
+
+    async fn capture_frame(&mut self) -> Result<Frame> {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::Wayland(capturer) => capturer.capture_frame().await,
+            #[cfg(target_os = "linux")]
+            Self::X11(capturer) => capturer.capture_frame().await,
+            #[cfg(target_os = "linux")]
+            Self::X11Fast(capturer) => capturer.capture_frame().await,
+            #[cfg(target_os = "linux")]
+            Self::WaylandFast(capturer) => capturer.capture_frame().await,
+            #[cfg(target_os = "windows")]
+            Self::Windows(capturer) => capturer.capture_frame().await,
+            #[cfg(target_os = "macos")]
+            Self::MacOS(capturer) => capturer.capture_frame().await,
+        }
+    }
+
+    fn get_display_info(&self) -> Vec<DisplayInfo> {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::Wayland(capturer) => capturer.get_display_info(),
+            #[cfg(target_os = "linux")]
+            Self::X11(capturer) => capturer.get_display_info(),
+            #[cfg(target_os = "linux")]
+            Self::X11Fast(capturer) => capturer.get_display_info(),
+            #[cfg(target_os = "linux")]
+            Self::WaylandFast(capturer) => capturer.get_display_info(),
+            #[cfg(target_os = "windows")]
+            Self::Windows(capturer) => capturer.get_display_info(),
+            #[cfg(target_os = "macos")]
+            Self::MacOS(capturer) => capturer.get_display_info(),
+        }
+    }
+
+    fn select_display(&mut self, display_id: u32) -> Result<()> {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::Wayland(capturer) => capturer.select_display(display_id),
+            #[cfg(target_os = "linux")]
+            Self::X11(capturer) => capturer.select_display(display_id),
+            #[cfg(target_os = "linux")]
+            Self::X11Fast(capturer) => capturer.select_display(display_id),
+            #[cfg(target_os = "linux")]
+            Self::WaylandFast(capturer) => capturer.select_display(display_id),
+            #[cfg(target_os = "windows")]
+            Self::Windows(capturer) => capturer.select_display(display_id),
+            #[cfg(target_os = "macos")]
+            Self::MacOS(capturer) => capturer.select_display(display_id),
+        }
+    }
+
+    fn set_capture_region(&mut self, x: i32, y: i32, width: u32, height: u32) -> Result<()> {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::Wayland(capturer) => capturer.set_capture_region(x, y, width, height),
+            #[cfg(target_os = "linux")]
+            Self::X11(capturer) => capturer.set_capture_region(x, y, width, height),
+            #[cfg(target_os = "linux")]
+            Self::X11Fast(capturer) => capturer.set_capture_region(x, y, width, height),
+            #[cfg(target_os = "linux")]
+            Self::WaylandFast(capturer) => capturer.set_capture_region(x, y, width, height),
+            #[cfg(target_os = "windows")]
+            Self::Windows(capturer) => capturer.set_capture_region(x, y, width, height),
+            #[cfg(target_os = "macos")]
+            Self::MacOS(capturer) => capturer.set_capture_region(x, y, width, height),
+        }
+    }
+
+    fn get_resolution(&self) -> (u32, u32) {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::Wayland(capturer) => capturer.get_resolution(),
+            #[cfg(target_os = "linux")]
+            Self::X11(capturer) => capturer.get_resolution(),
+            #[cfg(target_os = "linux")]
+            Self::X11Fast(capturer) => capturer.get_resolution(),
+            #[cfg(target_os = "linux")]
+            Self::WaylandFast(capturer) => capturer.get_resolution(),
+            #[cfg(target_os = "windows")]
+            Self::Windows(capturer) => capturer.get_resolution(),
+            #[cfg(target_os = "macos")]
+            Self::MacOS(capturer) => capturer.get_resolution(),
+        }
+    }
+
+    fn is_healthy(&self) -> bool {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::Wayland(capturer) => capturer.is_healthy(),
+            #[cfg(target_os = "linux")]
+            Self::X11(capturer) => capturer.is_healthy(),
+            #[cfg(target_os = "linux")]
+            Self::X11Fast(capturer) => capturer.is_healthy(),
+            #[cfg(target_os = "linux")]
+            Self::WaylandFast(capturer) => capturer.is_healthy(),
+            #[cfg(target_os = "windows")]
+            Self::Windows(capturer) => capturer.is_healthy(),
+            #[cfg(target_os = "macos")]
+            Self::MacOS(capturer) => capturer.is_healthy(),
+        }
+    }
+
+    async fn cleanup(&mut self) -> Result<()> {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::Wayland(capturer) => capturer.cleanup().await,
+            #[cfg(target_os = "linux")]
+            Self::X11(capturer) => capturer.cleanup().await,
+            #[cfg(target_os = "linux")]
+            Self::X11Fast(capturer) => capturer.cleanup().await,
+            #[cfg(target_os = "linux")]
+            Self::WaylandFast(capturer) => capturer.cleanup().await,
+            #[cfg(target_os = "windows")]
+            Self::Windows(capturer) => capturer.cleanup().await,
+            #[cfg(target_os = "macos")]
+            Self::MacOS(capturer) => capturer.cleanup().await,
+        }
+    }
+}
+
 /// Enum to hold different video encoder implementations
 pub enum VideoEncoderEnum {
     Software(encoding::SoftwareEncoder),
@@ -77,6 +216,99 @@ pub enum VideoEncoderEnum {
     Qsv(encoding::QsvEncoder),
     #[cfg(feature = "videotoolbox")]
     VideoToolbox(encoding::VideoToolboxEncoder),
+}
+
+#[async_trait]
+impl VideoEncoder for VideoEncoderEnum {
+    async fn initialize(&mut self, width: u32, height: u32, fps: u32) -> Result<()> {
+        match self {
+            Self::Software(encoder) => encoder.initialize(width, height, fps).await,
+            Self::H264(encoder) => encoder.initialize(width, height, fps).await,
+            Self::Hevc(encoder) => encoder.initialize(width, height, fps).await,
+            #[cfg(feature = "nvenc")]
+            Self::NvencH264(encoder) => encoder.initialize(width, height, fps).await,
+            #[cfg(feature = "nvenc")]
+            Self::NvencH265(encoder) => encoder.initialize(width, height, fps).await,
+            #[cfg(feature = "nvenc")]
+            Self::NvencAV1(encoder) => encoder.initialize(width, height, fps).await,
+            #[cfg(feature = "qsv")]
+            Self::Qsv(encoder) => encoder.initialize(width, height, fps).await,
+            #[cfg(feature = "videotoolbox")]
+            Self::VideoToolbox(encoder) => encoder.initialize(width, height, fps).await,
+        }
+    }
+
+    async fn encode_frame(&mut self, frame: &Frame) -> Result<Vec<u8>> {
+        match self {
+            Self::Software(encoder) => encoder.encode_frame(frame).await,
+            Self::H264(encoder) => encoder.encode_frame(frame).await,
+            Self::Hevc(encoder) => encoder.encode_frame(frame).await,
+            #[cfg(feature = "nvenc")]
+            Self::NvencH264(encoder) => encoder.encode_frame(frame).await,
+            #[cfg(feature = "nvenc")]
+            Self::NvencH265(encoder) => encoder.encode_frame(frame).await,
+            #[cfg(feature = "nvenc")]
+            Self::NvencAV1(encoder) => encoder.encode_frame(frame).await,
+            #[cfg(feature = "qsv")]
+            Self::Qsv(encoder) => encoder.encode_frame(frame).await,
+            #[cfg(feature = "videotoolbox")]
+            Self::VideoToolbox(encoder) => encoder.encode_frame(frame).await,
+        }
+    }
+
+    fn get_encoder_info(&self) -> EncoderInfo {
+        match self {
+            Self::Software(encoder) => encoder.get_encoder_info(),
+            Self::H264(encoder) => encoder.get_encoder_info(),
+            Self::Hevc(encoder) => encoder.get_encoder_info(),
+            #[cfg(feature = "nvenc")]
+            Self::NvencH264(encoder) => encoder.get_encoder_info(),
+            #[cfg(feature = "nvenc")]
+            Self::NvencH265(encoder) => encoder.get_encoder_info(),
+            #[cfg(feature = "nvenc")]
+            Self::NvencAV1(encoder) => encoder.get_encoder_info(),
+            #[cfg(feature = "qsv")]
+            Self::Qsv(encoder) => encoder.get_encoder_info(),
+            #[cfg(feature = "videotoolbox")]
+            Self::VideoToolbox(encoder) => encoder.get_encoder_info(),
+        }
+    }
+
+    fn is_healthy(&self) -> bool {
+        match self {
+            Self::Software(encoder) => encoder.is_healthy(),
+            Self::H264(encoder) => encoder.is_healthy(),
+            Self::Hevc(encoder) => encoder.is_healthy(),
+            #[cfg(feature = "nvenc")]
+            Self::NvencH264(encoder) => encoder.is_healthy(),
+            #[cfg(feature = "nvenc")]
+            Self::NvencH265(encoder) => encoder.is_healthy(),
+            #[cfg(feature = "nvenc")]
+            Self::NvencAV1(encoder) => encoder.is_healthy(),
+            #[cfg(feature = "qsv")]
+            Self::Qsv(encoder) => encoder.is_healthy(),
+            #[cfg(feature = "videotoolbox")]
+            Self::VideoToolbox(encoder) => encoder.is_healthy(),
+        }
+    }
+
+    async fn cleanup(&mut self) -> Result<()> {
+        match self {
+            Self::Software(encoder) => encoder.cleanup().await,
+            Self::H264(encoder) => encoder.cleanup().await,
+            Self::Hevc(encoder) => encoder.cleanup().await,
+            #[cfg(feature = "nvenc")]
+            Self::NvencH264(encoder) => encoder.cleanup().await,
+            #[cfg(feature = "nvenc")]
+            Self::NvencH265(encoder) => encoder.cleanup().await,
+            #[cfg(feature = "nvenc")]
+            Self::NvencAV1(encoder) => encoder.cleanup().await,
+            #[cfg(feature = "qsv")]
+            Self::Qsv(encoder) => encoder.cleanup().await,
+            #[cfg(feature = "videotoolbox")]
+            Self::VideoToolbox(encoder) => encoder.cleanup().await,
+        }
+    }
 }
 
 /// Platform-specific screen capture implementation
@@ -114,7 +346,7 @@ pub trait VideoEncoder: Send + Sync {
     async fn initialize(&mut self, width: u32, height: u32, fps: u32) -> Result<()>;
     
     /// Encode a frame
-    async fn encode_frame(&self, frame: &Frame) -> Result<Vec<u8>>;
+    async fn encode_frame(&mut self, frame: &Frame) -> Result<Vec<u8>>;
     
     /// Get encoder info
     fn get_encoder_info(&self) -> EncoderInfo;
@@ -304,7 +536,7 @@ impl ScreenCapture {
                         debug!("Captured frame: {}x{}", frame.width, frame.height);
                         
                         // Encode frame if encoder is available
-                        if let Some(encoder) = encoder.read().await.as_ref() {
+                        if let Some(encoder) = encoder.write().await.as_mut() {
                             match encoder.encode_frame(&frame).await {
                                 Ok(encoded_data) => {
                                     debug!("Frame encoded: {} bytes", encoded_data.len());
@@ -352,6 +584,14 @@ impl ScreenCapture {
         }
         
         info!("Screen capture streaming stopped");
+        Ok(())
+    }
+
+    /// Send encoded frame data to relay server
+    async fn send_frame_to_relay(encoded_data: Vec<u8>) -> Result<()> {
+        // TODO: Implement actual relay communication
+        // This will integrate with the connection module to send frames via WebSocket
+        debug!("Would send {} bytes to relay server", encoded_data.len());
         Ok(())
     }
 
