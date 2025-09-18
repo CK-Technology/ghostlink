@@ -1,5 +1,7 @@
 # GhostLink
 
+![GhostLink Logo](assets/logo/ghostlink-logo.png)
+
 ![Built with Rust](https://img.shields.io/badge/Built%20with-Rust-000000?logo=rust\&logoColor=white)
 ![Zero Trust Architecture](https://img.shields.io/badge/Zero%20Trust-Enabled-blueviolet?style=flat-square)
 ![End-to-End Encryption](https://img.shields.io/badge/End--to--End%20Encryption-Active-brightgreen)
