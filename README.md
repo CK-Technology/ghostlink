@@ -11,6 +11,14 @@
 ![Enterprise Ready](https://img.shields.io/badge/Enterprise-Ready-darkblue)
 ![Version](https://img.shields.io/badge/Version-0.2.0--dev-blue)
 
+## DISCLAIMER
+
+⚠️ **EXPERIMENTAL LIBRARY - FOR LAB/PERSONAL USE** ⚠️
+
+This is an experimental library under active development. It is
+intended for research, learning, and personal projects. The API is subject
+to change!
+
 ---
 
 GhostLink is an all-in-one remote access and support platform engineered for security-driven teams, MSPs, and IT departments. Written in Rust, GhostLink merges a modern zero trust relay, a powerful web management portal, and ultra-fast cross-platform agents—all in a single, self-hosted server.
