@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -17,8 +19,7 @@ pub mod p2p;
 pub mod hybrid;
 pub mod monitor_protocol;
 
-pub use p2p::{P2PManager, P2PConnectionInfo, NATType};
-pub use hybrid::{HybridConnectionManager, ConnectionType, ConnectionSettings};
+pub use p2p::{P2PManager, P2PConnectionInfo};
 
 pub type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -139,7 +140,7 @@ impl RelayConnection {
             config.heartbeat_interval,
         )));
         
-        let mut connection = Self {
+        let connection = Self {
             config: config.clone(),
             ws_stream: Arc::new(RwLock::new(None)),
             heartbeat_manager,
@@ -353,15 +354,16 @@ impl RelayConnection {
     /// Send binary frame data directly (more efficient for video frames)
     pub async fn send_binary_frame(&self, frame_data: Vec<u8>) -> Result<()> {
         let mut stream_guard = self.ws_stream.write().await;
-        
+        let frame_len = frame_data.len();
+
         if let Some(ref mut stream) = *stream_guard {
             stream.send(Message::Binary(frame_data)).await
                 .context("Failed to send binary frame")?;
-            trace!("Sent binary frame: {} bytes", frame_data.len());
+            trace!("Sent binary frame: {} bytes", frame_len);
         } else {
             return Err(anyhow::anyhow!("WebSocket not connected"));
         }
-        
+
         Ok(())
     }
 

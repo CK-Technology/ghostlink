@@ -1,10 +1,10 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::net::{SocketAddr, IpAddr};
+use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, info};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -267,7 +267,7 @@ impl P2PManager {
     async fn connect_through_relay(
         &self,
         relay_addr: &SocketAddr,
-        peer_id: &str,
+        _peer_id: &str,
     ) -> Result<TcpStream> {
         debug!("Connecting through relay: {}", relay_addr);
         

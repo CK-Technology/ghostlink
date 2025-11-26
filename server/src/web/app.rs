@@ -99,7 +99,7 @@ struct Device {
 
 #[component]
 fn DeviceCard(device: Device) -> impl IntoView {
-    let status_class = match device.status.as_str() {
+    let _status_class = match device.status.as_str() {
         "online" => "text-success",
         "offline" => "text-danger",
         _ => "text-warning",

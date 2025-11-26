@@ -1,7 +1,6 @@
 use axum::{
-    extract::{Query, State, Request},
+    extract::{Query, State},
     http::{StatusCode, HeaderMap, HeaderValue},
-    middleware::Next,
     response::{IntoResponse, Response},
     Json,
 };
@@ -10,8 +9,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use tracing::{info, warn, error, debug};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation, Algorithm};
+use tracing::{info, debug};
+use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
 
 use crate::AppState;
 
@@ -160,7 +159,9 @@ pub struct AuthorizationCode {
     pub session_state: Option<String>,
 }
 
+/// OAuth token response from identity provider
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct TokenResponse {
     pub access_token: String,
     pub token_type: String,
@@ -334,22 +335,23 @@ impl OidcManager {
         
         let state = state.unwrap_or_else(|| Uuid::new_v4().to_string());
         let nonce = Uuid::new_v4().to_string();
-        
+        let scope_str = config.scopes.join(" ");
+
         let mut params = vec![
             ("client_id", config.client_id.as_str()),
             ("response_type", "code"),
             ("redirect_uri", config.redirect_uri.as_str()),
-            ("scope", &config.scopes.join(" ")),
-            ("state", &state),
-            ("nonce", &nonce),
+            ("scope", scope_str.as_str()),
+            ("state", state.as_str()),
+            ("nonce", nonce.as_str()),
             ("response_mode", "query"),
         ];
-        
+
         // Add Microsoft-specific parameters
         if matches!(config.provider, OidcProvider::MicrosoftEntraId | OidcProvider::AzureAd) {
             params.push(("prompt", "select_account"));
         }
-        
+
         let query_string = params
             .into_iter()
             .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
@@ -574,12 +576,12 @@ impl OidcManager {
     fn jwk_to_decoding_key(&self, jwk: &JsonWebKey) -> Result<DecodingKey, String> {
         match jwk.kty.as_str() {
             "RSA" => {
-                let n = jwk.n.as_ref().ok_or("Missing RSA modulus")?;
-                let e = jwk.e.as_ref().ok_or("Missing RSA exponent")?;
-                
+                let _n = jwk.n.as_ref().ok_or("Missing RSA modulus")?;
+                let _e = jwk.e.as_ref().ok_or("Missing RSA exponent")?;
+
                 // This is simplified - in production you'd properly decode the base64url values
                 // and construct the RSA public key
-                DecodingKey::from_rsa_pem(b"dummy").map_err(|e| format!("RSA key creation failed: {}", e))
+                DecodingKey::from_rsa_pem(b"dummy").map_err(|err| format!("RSA key creation failed: {}", err))
             }
             _ => Err(format!("Unsupported key type: {}", jwk.kty)),
         }
@@ -681,7 +683,8 @@ impl OidcManager {
     }
 }
 
-/// NGINX auth request middleware
+/// NGINX auth request middleware for use with nginx auth_request directive
+#[allow(dead_code)]
 pub async fn nginx_auth_middleware(
     State(app_state): State<AppState>,
     headers: HeaderMap,
@@ -694,17 +697,17 @@ pub async fn nginx_auth_middleware(
             let config = app_state.device_manager.oidc_manager.get_config().await;
             
             response_headers.insert(
-                config.nginx_integration.user_header.parse().unwrap(),
+                config.nginx_integration.user_header.parse::<axum::http::header::HeaderName>().unwrap(),
                 HeaderValue::from_str(&session.email).unwrap(),
             );
-            
+
             response_headers.insert(
-                config.nginx_integration.email_header.parse().unwrap(),
+                config.nginx_integration.email_header.parse::<axum::http::header::HeaderName>().unwrap(),
                 HeaderValue::from_str(&session.email).unwrap(),
             );
-            
+
             response_headers.insert(
-                config.nginx_integration.groups_header.parse().unwrap(),
+                config.nginx_integration.groups_header.parse::<axum::http::header::HeaderName>().unwrap(),
                 HeaderValue::from_str(&session.groups.join(",")).unwrap(),
             );
             
@@ -714,7 +717,7 @@ pub async fn nginx_auth_middleware(
                 .join(",");
             
             response_headers.insert(
-                config.nginx_integration.roles_header.parse().unwrap(),
+                config.nginx_integration.roles_header.parse::<axum::http::header::HeaderName>().unwrap(),
                 HeaderValue::from_str(&roles_str).unwrap(),
             );
             

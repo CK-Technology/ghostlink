@@ -1,7 +1,7 @@
 use crate::error::{GhostLinkError, Result};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::{debug, trace, warn};
+use tracing::warn;
 
 /// Input event types for remote control
 #[derive(Debug, Clone, Serialize, Deserialize)]

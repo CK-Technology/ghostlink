@@ -2,7 +2,7 @@ use axum::{
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Router,
 };
 use leptos::*;
@@ -37,10 +37,9 @@ mod terminal;
 
 use crate::{
     config::AppConfig,
-    models::{Agent, Session},
-    relay::handle_websocket,
     web::app::App,
     device_manager::DeviceManager,
+    database::DatabaseService,
 };
 
 // Application state for the server
@@ -48,6 +47,7 @@ use crate::{
 pub struct AppState {
     pub device_manager: Arc<DeviceManager>,
     pub config: AppConfig,
+    pub db: Option<Arc<DatabaseService>>,
 }
 
 #[tokio::main]
@@ -73,6 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_state = AppState {
         device_manager,
         config: config.clone(),
+        db: None, // Database connection is optional, set via DATABASE_URL if needed
     };
 
     // Setting get_configuration(None) means we'll be using cargo-leptos's env values
@@ -94,7 +95,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
                 .layer(CorsLayer::permissive()),
-        );
+        )
+        .with_state(app_state.clone());
 
     // Build API routes
     let api_routes = Router::new()
@@ -113,10 +115,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/ws", get(api::websocket_session_handler))
         
         // Toolbox API routes
-        .route("/api/toolbox/tools", get(toolbox::api_get_available_tools))
+        .route("/api/toolbox/tools", get(toolbox::api_get_tools))
+        .route("/api/toolbox/available", get(toolbox::api_get_available_tools))
         .route("/api/toolbox/tools/:category", get(toolbox::api_get_tools_by_category))
         .route("/api/toolbox/execute", post(toolbox::api_execute_tool))
-        .route("/api/toolbox/upload", post(toolbox::api_upload_custom_tool))
+        .route("/api/toolbox/upload", post(toolbox::api_upload_tool))
+        .route("/api/toolbox/upload-custom", post(toolbox::api_upload_custom_tool))
         .route("/api/toolbox/history", get(toolbox::api_get_execution_history))
         
         // Branding API routes
@@ -138,13 +142,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/vpn/peers", get(vpn_integration::api_get_vpn_peers))
         .route("/api/vpn/tailscale/enable", post(vpn_integration::api_enable_tailscale))
         .route("/api/vpn/wireguard/config", get(vpn_integration::api_get_wireguard_config))
+        .route("/api/vpn/config", get(vpn_integration::api_get_vpn_config))
+        .route("/api/vpn/config", put(vpn_integration::api_update_vpn_config))
         
         // OIDC Authentication API routes
-        .route("/api/auth/login", get(auth::oidc::api_oidc_login))
-        .route("/api/auth/callback", get(auth::oidc::api_oidc_callback))
-        .route("/api/auth/validate", get(auth::oidc::api_validate_session))
-        .route("/api/auth/logout", post(auth::oidc::api_logout))
-        .route("/api/auth/nginx", get(auth::oidc::api_nginx_auth))
+        .route("/api/auth/oidc/login", get(auth::oidc::api_oidc_login))
+        .route("/api/auth/oidc/callback", get(auth::oidc::api_oidc_callback))
+        .route("/api/auth/oidc/oauth-callback", get(auth::oidc::api_oauth_callback))
+        .route("/api/auth/oidc/auth-url", get(auth::oidc::api_get_auth_url))
+        .route("/api/auth/oidc/validate", get(auth::oidc::api_validate_session))
+        .route("/api/auth/oidc/logout", post(auth::oidc::api_logout))
+        .route("/api/auth/oidc/nginx", get(auth::oidc::api_nginx_auth))
+        .route("/api/auth/oidc/config", get(auth::oidc::api_get_oidc_config))
+        .route("/api/auth/oidc/config", put(auth::oidc::api_update_oidc_config))
         
         // PAM (Privileged Access Management) API routes
         .route("/api/pam/sessions/:session_id/elevate", post(pam::api_request_elevation))
@@ -177,11 +187,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .with_state(leptos_options.clone());
 
-    // Combine routes with prefixes for nginx routing
-    let app = Router::new()
-        .nest("/relay", relay_routes) // relay.cktechx.com/relay/*
-        .merge(api_routes) // API routes with AppState
-        .merge(web_routes); // Web routes with LeptosOptions
+    // Combine routes - each router already has its own state bound
+    // Use Router::<()> as the base to combine routers with different states
+    let app = Router::<()>::new()
+        .nest("/relay", relay_routes.with_state(())) // relay routes with AppState
+        .merge(api_routes.with_state(())) // API routes with AppState
+        .merge(web_routes.with_state(())); // Web routes with LeptosOptions
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     info!("🚀 AtlasConnect Server listening on http://{}", &addr);
@@ -190,7 +201,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("💡 Configure nginx:");
     info!("   - relay.cktechx.com → proxy_pass to /relay/*");
     info!("   - atlas.cktechx.com → proxy_pass to /*");
-    
+
     axum::serve(listener, app.into_make_service())
         .await
         .unwrap();

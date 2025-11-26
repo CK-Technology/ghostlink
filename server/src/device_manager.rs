@@ -4,10 +4,10 @@ use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn, debug};
 use axum::extract::ws::Message;
 
-use crate::models::{Agent, Session, SessionType, SessionStatus};
+use crate::models::{Agent, Session, SessionType};
 use crate::toolbox::ToolboxManager;
 use crate::branding::BrandingManager;
 use crate::direct_connect::DirectConnectManager;
@@ -22,6 +22,7 @@ pub struct DeviceConnection {
     pub agent: Agent,
     pub tx: mpsc::UnboundedSender<Message>,
     pub last_ping: DateTime<Utc>,
+    #[allow(dead_code)]
     pub connection_time: DateTime<Utc>,
     pub active_sessions: Vec<Uuid>,
 }
@@ -31,6 +32,7 @@ pub struct DeviceConnection {
 pub struct SessionConnection {
     pub session: Session,
     pub tx: mpsc::UnboundedSender<Message>,
+    #[allow(dead_code)]
     pub connection_time: DateTime<Utc>,
 }
 
@@ -44,6 +46,7 @@ pub struct DeviceManager {
     
     /// Channel for broadcasting messages between devices and sessions
     broadcast_tx: mpsc::UnboundedSender<BroadcastMessage>,
+    #[allow(dead_code)]
     broadcast_rx: Arc<RwLock<mpsc::UnboundedReceiver<BroadcastMessage>>>,
     
     /// Toolbox manager for tool deployment and execution
@@ -68,8 +71,10 @@ pub struct DeviceManager {
     pub terminal_manager: Arc<TerminalManager>,
 }
 
-/// Messages that can be broadcast between components
+/// Messages that can be broadcast between components.
+/// These are used for inter-component communication.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum BroadcastMessage {
     DeviceConnected(Uuid),
     DeviceDisconnected(Uuid),
@@ -108,7 +113,7 @@ impl DeviceManager {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             broadcast_tx,
             broadcast_rx: Arc::new(RwLock::new(broadcast_rx)),
-            toolbox_manager: Arc::new(ToolboxManager::new()),
+            toolbox_manager: Arc::new(ToolboxManager::new(std::path::PathBuf::from("./data/toolbox"))),
             branding_manager: Arc::new(BrandingManager::new()),
             direct_connect_manager: Arc::new(DirectConnectManager::new()),
             vpn_manager: Arc::new(VpnManager::new()),
@@ -158,17 +163,19 @@ impl DeviceManager {
 
         let agent = Agent {
             id: agent_id,
+            organization_id: None, // TODO: Get from authentication context
             name: registration.name.unwrap_or_else(|| registration.hostname.clone()),
-            hostname: registration.hostname,
+            hostname: Some(registration.hostname),
             platform: registration.platform,
-            architecture: registration.architecture,
-            version: registration.version,
-            public_key: registration.public_key.unwrap_or_default(),
+            architecture: Some(registration.architecture),
+            os_version: None,
+            agent_version: Some(registration.version),
+            public_key: registration.public_key,
             last_seen: Some(Utc::now()),
-            is_online: true,
-            owner_id: Uuid::new_v4(), // TODO: Get from authentication context
-            group_id: None,
-            tags: Vec::new(),
+            status: "online".to_string(),
+            connection_info: sqlx::types::Json(std::collections::HashMap::new()),
+            capabilities: sqlx::types::Json(std::collections::HashMap::new()),
+            settings: sqlx::types::Json(std::collections::HashMap::new()),
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -246,12 +253,18 @@ impl DeviceManager {
             id: session_id,
             agent_id: request.agent_id,
             user_id: request.user_id,
-            session_type: request.session_type,
-            status: SessionStatus::Connecting,
-            started_at: Utc::now(),
+            organization_id: None,
+            session_type: request.session_type.to_string(),
+            status: "connecting".to_string(),
+            started_at: Some(Utc::now()),
             ended_at: None,
-            ip_address: "0.0.0.0".to_string(), // TODO: Get from request context
-            user_agent: "GhostLink Web".to_string(),
+            duration_seconds: None,
+            bytes_transferred: 0,
+            frames_captured: 0,
+            settings: sqlx::types::Json(std::collections::HashMap::new()),
+            metadata: sqlx::types::Json(std::collections::HashMap::new()),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
         };
 
         let session_connection = SessionConnection {
@@ -341,15 +354,15 @@ impl DeviceManager {
     pub async fn broadcast_screen_frame(&self, agent_id: Uuid, frame_data: Vec<u8>) {
         let sessions = self.sessions.read().await;
         for connection in sessions.values() {
-            if connection.session.agent_id == agent_id && 
-               matches!(connection.session.session_type, SessionType::View | SessionType::Control) {
+            if connection.session.agent_id == agent_id &&
+               (connection.session.session_type == "view" || connection.session.session_type == "control") {
                 let message = Message::Binary(frame_data.clone());
                 if let Err(e) = connection.tx.send(message) {
                     warn!("Failed to send screen frame to session {}: {}", connection.session.id, e);
                 }
             }
         }
-        
+
         let _ = self.broadcast_tx.send(BroadcastMessage::ScreenFrame(agent_id, frame_data));
     }
 
@@ -358,7 +371,7 @@ impl DeviceManager {
         let sessions = self.sessions.read().await;
         if let Some(session_conn) = sessions.get(&session_id) {
             // Only allow input for control sessions
-            if !matches!(session_conn.session.session_type, SessionType::Control) {
+            if session_conn.session.session_type != "control" {
                 return Err("Session does not have control permissions".to_string());
             }
 

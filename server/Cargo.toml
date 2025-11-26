@@ -63,6 +63,9 @@ url.workspace = true
 reqwest.workspace = true
 urlencoding.workspace = true
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+
 [features]
 default = ["ssr"]
 hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate"]

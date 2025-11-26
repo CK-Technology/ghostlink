@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -7,20 +9,22 @@ use tracing::{debug, error, info, warn, trace};
 
 use crate::{
     session::SessionType,
-    error::{Result, CaptureError, GhostLinkError},
+    error::Result,
 };
 
-use frame_protocol::{FrameMessage, VideoCodec};
-use monitor_manager::MonitorManager;
 
 #[cfg(target_os = "linux")]
 pub mod wayland;
+#[cfg(target_os = "linux")]
+pub mod wayland_legacy;
 #[cfg(target_os = "linux")]
 pub mod x11;
 #[cfg(target_os = "linux")]
 pub mod x11_fast;
 #[cfg(target_os = "linux")]
 pub mod wayland_fast;
+
+// Re-export the new Wayland capturer
 
 #[cfg(target_os = "windows")]
 pub mod windows;
@@ -49,7 +53,9 @@ pub struct ScreenCapture {
 /// Enum to hold different screen capturer implementations
 pub enum ScreenCapturerEnum {
     #[cfg(target_os = "linux")]
-    Wayland(wayland::WaylandCapturer),
+    WaylandPortal(wayland::WaylandPortalCapturer),
+    #[cfg(target_os = "linux")]
+    Wayland(wayland::capturer::WaylandCapturer),
     #[cfg(target_os = "linux")]
     X11(x11::X11Capturer),
     #[cfg(target_os = "linux")]
@@ -66,6 +72,8 @@ pub enum ScreenCapturerEnum {
 impl ScreenCapturer for ScreenCapturerEnum {
     async fn initialize(&mut self) -> Result<()> {
         match self {
+            #[cfg(target_os = "linux")]
+            Self::WaylandPortal(capturer) => capturer.initialize().await,
             #[cfg(target_os = "linux")]
             Self::Wayland(capturer) => capturer.initialize().await,
             #[cfg(target_os = "linux")]
@@ -84,6 +92,8 @@ impl ScreenCapturer for ScreenCapturerEnum {
     async fn capture_frame(&mut self) -> Result<Frame> {
         match self {
             #[cfg(target_os = "linux")]
+            Self::WaylandPortal(capturer) => capturer.capture_frame().await,
+            #[cfg(target_os = "linux")]
             Self::Wayland(capturer) => capturer.capture_frame().await,
             #[cfg(target_os = "linux")]
             Self::X11(capturer) => capturer.capture_frame().await,
@@ -100,6 +110,8 @@ impl ScreenCapturer for ScreenCapturerEnum {
 
     fn get_display_info(&self) -> Vec<DisplayInfo> {
         match self {
+            #[cfg(target_os = "linux")]
+            Self::WaylandPortal(capturer) => capturer.get_display_info(),
             #[cfg(target_os = "linux")]
             Self::Wayland(capturer) => capturer.get_display_info(),
             #[cfg(target_os = "linux")]
@@ -118,6 +130,8 @@ impl ScreenCapturer for ScreenCapturerEnum {
     fn select_display(&mut self, display_id: u32) -> Result<()> {
         match self {
             #[cfg(target_os = "linux")]
+            Self::WaylandPortal(capturer) => capturer.select_display(display_id),
+            #[cfg(target_os = "linux")]
             Self::Wayland(capturer) => capturer.select_display(display_id),
             #[cfg(target_os = "linux")]
             Self::X11(capturer) => capturer.select_display(display_id),
@@ -134,6 +148,8 @@ impl ScreenCapturer for ScreenCapturerEnum {
 
     fn set_capture_region(&mut self, x: i32, y: i32, width: u32, height: u32) -> Result<()> {
         match self {
+            #[cfg(target_os = "linux")]
+            Self::WaylandPortal(capturer) => capturer.set_capture_region(x, y, width, height),
             #[cfg(target_os = "linux")]
             Self::Wayland(capturer) => capturer.set_capture_region(x, y, width, height),
             #[cfg(target_os = "linux")]
@@ -152,6 +168,8 @@ impl ScreenCapturer for ScreenCapturerEnum {
     fn get_resolution(&self) -> (u32, u32) {
         match self {
             #[cfg(target_os = "linux")]
+            Self::WaylandPortal(capturer) => capturer.get_resolution(),
+            #[cfg(target_os = "linux")]
             Self::Wayland(capturer) => capturer.get_resolution(),
             #[cfg(target_os = "linux")]
             Self::X11(capturer) => capturer.get_resolution(),
@@ -169,6 +187,8 @@ impl ScreenCapturer for ScreenCapturerEnum {
     fn is_healthy(&self) -> bool {
         match self {
             #[cfg(target_os = "linux")]
+            Self::WaylandPortal(capturer) => capturer.is_healthy(),
+            #[cfg(target_os = "linux")]
             Self::Wayland(capturer) => capturer.is_healthy(),
             #[cfg(target_os = "linux")]
             Self::X11(capturer) => capturer.is_healthy(),
@@ -185,6 +205,8 @@ impl ScreenCapturer for ScreenCapturerEnum {
 
     async fn cleanup(&mut self) -> Result<()> {
         match self {
+            #[cfg(target_os = "linux")]
+            Self::WaylandPortal(capturer) => capturer.cleanup().await,
             #[cfg(target_os = "linux")]
             Self::Wayland(capturer) => capturer.cleanup().await,
             #[cfg(target_os = "linux")]
@@ -426,18 +448,34 @@ impl ScreenCapture {
     async fn create_platform_capturer() -> Result<ScreenCapturerEnum> {
         #[cfg(target_os = "linux")]
         {
-            // Check for high-performance capture preference
+            // Check for capture method preference
+            let use_portal = std::env::var("GHOSTLINK_USE_PORTAL")
+                .map(|v| v == "1" || v.to_lowercase() == "true")
+                .unwrap_or(true); // Default to Portal-based capture (Wayland-native)
+
             let use_fast_capture = std::env::var("GHOSTLINK_FAST_CAPTURE")
                 .map(|v| v == "1" || v.to_lowercase() == "true")
-                .unwrap_or(true); // Default to fast capture
-            
+                .unwrap_or(true);
+
             // Try Wayland first, fall back to X11
             if std::env::var("WAYLAND_DISPLAY").is_ok() {
-                info!("Using Wayland screen capture (60fps capable)");
+                // Wayland-native: Use Portal + PipeWire (preferred)
+                if use_portal {
+                    info!("Using Wayland Portal + PipeWire capture (native, 60fps capable)");
+                    match wayland::WaylandPortalCapturer::new().await {
+                        Ok(capturer) => return Ok(ScreenCapturerEnum::WaylandPortal(capturer)),
+                        Err(e) => {
+                            warn!("Portal capture failed, falling back: {}", e);
+                        }
+                    }
+                }
+
+                // Fallback to legacy Wayland methods
+                info!("Using legacy Wayland screen capture");
                 if use_fast_capture {
                     Ok(ScreenCapturerEnum::WaylandFast(wayland_fast::WaylandFastCapturer::new().await?))
                 } else {
-                    Ok(ScreenCapturerEnum::Wayland(wayland::WaylandCapturer::new().await?))
+                    Ok(ScreenCapturerEnum::Wayland(wayland::capturer::WaylandCapturer::new().await?))
                 }
             } else {
                 info!("Using X11 screen capture (60fps capable)");
@@ -587,14 +625,6 @@ impl ScreenCapture {
         Ok(())
     }
 
-    /// Send encoded frame data to relay server
-    async fn send_frame_to_relay(encoded_data: Vec<u8>) -> Result<()> {
-        // TODO: Implement actual relay communication
-        // This will integrate with the connection module to send frames via WebSocket
-        debug!("Would send {} bytes to relay server", encoded_data.len());
-        Ok(())
-    }
-
     /// Get available displays
     pub async fn get_displays(&self) -> Result<Vec<DisplayInfo>> {
         let capturer_guard = self.capturer.lock().await;
@@ -647,23 +677,27 @@ impl ScreenCapturerEnum {
     pub async fn initialize(&mut self) -> Result<()> {
         match self {
             #[cfg(target_os = "linux")]
-            ScreenCapturerEnum::Wayland(ref mut capturer) => capturer.initialize().await,
+            ScreenCapturerEnum::WaylandPortal(capturer) => capturer.initialize().await,
             #[cfg(target_os = "linux")]
-            ScreenCapturerEnum::X11(ref mut capturer) => capturer.initialize().await,
+            ScreenCapturerEnum::Wayland(capturer) => capturer.initialize().await,
             #[cfg(target_os = "linux")]
-            ScreenCapturerEnum::X11Fast(ref mut capturer) => capturer.initialize().await,
+            ScreenCapturerEnum::X11(capturer) => capturer.initialize().await,
             #[cfg(target_os = "linux")]
-            ScreenCapturerEnum::WaylandFast(ref mut capturer) => capturer.initialize().await,
+            ScreenCapturerEnum::X11Fast(capturer) => capturer.initialize().await,
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::WaylandFast(capturer) => capturer.initialize().await,
             #[cfg(target_os = "windows")]
-            ScreenCapturerEnum::Windows(ref mut capturer) => capturer.initialize().await,
+            ScreenCapturerEnum::Windows(capturer) => capturer.initialize().await,
             #[cfg(target_os = "macos")]
-            ScreenCapturerEnum::MacOS(ref mut capturer) => capturer.initialize().await,
+            ScreenCapturerEnum::MacOS(capturer) => capturer.initialize().await,
         }
     }
-    
+
     /// Capture a single frame
     pub async fn capture_frame(&mut self) -> Result<Frame> {
         match self {
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::WaylandPortal(capturer) => capturer.capture_frame().await,
             #[cfg(target_os = "linux")]
             ScreenCapturerEnum::Wayland(capturer) => capturer.capture_frame().await,
             #[cfg(target_os = "linux")]
@@ -678,10 +712,12 @@ impl ScreenCapturerEnum {
             ScreenCapturerEnum::MacOS(capturer) => capturer.capture_frame().await,
         }
     }
-    
+
     /// Get available display information
     pub fn get_display_info(&self) -> Vec<DisplayInfo> {
         match self {
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::WaylandPortal(capturer) => capturer.get_display_info(),
             #[cfg(target_os = "linux")]
             ScreenCapturerEnum::Wayland(capturer) => capturer.get_display_info(),
             #[cfg(target_os = "linux")]
@@ -696,10 +732,12 @@ impl ScreenCapturerEnum {
             ScreenCapturerEnum::MacOS(capturer) => capturer.get_display_info(),
         }
     }
-    
+
     /// Set which display to capture (for multi-monitor)
     pub fn select_display(&mut self, display_id: u32) -> Result<()> {
         match self {
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::WaylandPortal(capturer) => capturer.select_display(display_id),
             #[cfg(target_os = "linux")]
             ScreenCapturerEnum::Wayland(capturer) => capturer.select_display(display_id),
             #[cfg(target_os = "linux")]
@@ -714,10 +752,12 @@ impl ScreenCapturerEnum {
             ScreenCapturerEnum::MacOS(capturer) => capturer.select_display(display_id),
         }
     }
-    
+
     /// Set capture region
     pub fn set_capture_region(&mut self, x: i32, y: i32, width: u32, height: u32) -> Result<()> {
         match self {
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::WaylandPortal(capturer) => capturer.set_capture_region(x, y, width, height),
             #[cfg(target_os = "linux")]
             ScreenCapturerEnum::Wayland(capturer) => capturer.set_capture_region(x, y, width, height),
             #[cfg(target_os = "linux")]
@@ -732,10 +772,12 @@ impl ScreenCapturerEnum {
             ScreenCapturerEnum::MacOS(capturer) => capturer.set_capture_region(x, y, width, height),
         }
     }
-    
+
     /// Get current capture resolution
     pub fn get_resolution(&self) -> (u32, u32) {
         match self {
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::WaylandPortal(capturer) => capturer.get_resolution(),
             #[cfg(target_os = "linux")]
             ScreenCapturerEnum::Wayland(capturer) => capturer.get_resolution(),
             #[cfg(target_os = "linux")]
@@ -750,10 +792,12 @@ impl ScreenCapturerEnum {
             ScreenCapturerEnum::MacOS(capturer) => capturer.get_resolution(),
         }
     }
-    
+
     /// Check if capturer is healthy
     pub fn is_healthy(&self) -> bool {
         match self {
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::WaylandPortal(capturer) => capturer.is_healthy(),
             #[cfg(target_os = "linux")]
             ScreenCapturerEnum::Wayland(capturer) => capturer.is_healthy(),
             #[cfg(target_os = "linux")]
@@ -772,6 +816,8 @@ impl ScreenCapturerEnum {
     /// Cleanup capturer resources
     pub async fn cleanup(&mut self) -> Result<()> {
         match self {
+            #[cfg(target_os = "linux")]
+            ScreenCapturerEnum::WaylandPortal(capturer) => capturer.cleanup().await,
             #[cfg(target_os = "linux")]
             ScreenCapturerEnum::Wayland(capturer) => capturer.cleanup().await,
             #[cfg(target_os = "linux")]
@@ -809,7 +855,7 @@ impl VideoEncoderEnum {
     }
     
     /// Encode a frame
-    pub async fn encode_frame(&self, frame: &Frame) -> Result<Vec<u8>> {
+    pub async fn encode_frame(&mut self, frame: &Frame) -> Result<Vec<u8>> {
         match self {
             VideoEncoderEnum::Software(encoder) => encoder.encode_frame(frame).await,
             VideoEncoderEnum::H264(encoder) => encoder.encode_frame(frame).await,

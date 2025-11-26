@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub mod window;
 
 use anyhow::Result;
@@ -10,7 +12,7 @@ use crate::capture::ScreenCapture;
 use crate::config::ClientConfig;
 use crate::input::InputController;
 
-pub use window::{SessionWindow, SessionTab};
+pub use window::SessionWindow;
 
 // pub mod backstage;
 // pub mod console;

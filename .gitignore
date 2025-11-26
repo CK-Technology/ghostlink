@@ -4,10 +4,12 @@ Cargo.lock
 
 # Temporary directories
 TEMP/
-
+archive/
 # Added by cargo
 #
 # already existing elements were commented out
 
 #/target
 CLAUDE.md
+TODO.md 
+ROADMAP.md

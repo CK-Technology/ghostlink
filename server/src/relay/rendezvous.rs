@@ -1,8 +1,12 @@
+//! Rendezvous server for NAT traversal and peer discovery.
+//! Facilitates P2P connections between agents and technicians.
+#![allow(dead_code)]
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    net::{IpAddr, SocketAddr},
+    net::SocketAddr,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -11,10 +15,7 @@ use tokio::{
     sync::{broadcast, RwLock},
     time::interval,
 };
-use tracing::{debug, info, warn, error};
-use uuid::Uuid;
-
-use super::{RelayMessage, RelayMessageType, MessagePriority};
+use tracing::{debug, info, error};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RendezvousRequest {

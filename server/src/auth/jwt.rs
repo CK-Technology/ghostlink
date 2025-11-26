@@ -4,12 +4,11 @@ use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use axum::{
-    extract::{FromRequestParts, State},
+    extract::FromRequestParts,
     http::{request::Parts, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
-use crate::AppState;
 
 /// JWT Claims structure
 #[derive(Debug, Serialize, Deserialize)]
@@ -231,6 +230,7 @@ pub enum AuthError {
     MissingToken,
     InvalidToken,
     TokenExpired,
+    #[allow(dead_code)]
     Unauthorized,
 }
 
@@ -250,6 +250,7 @@ impl IntoResponse for AuthError {
 }
 
 /// Role-based access control guard
+#[allow(dead_code)]
 pub fn require_role(user_role: &str, required_roles: &[&str]) -> Result<(), AuthError> {
     if required_roles.contains(&user_role) {
         Ok(())
@@ -261,7 +262,6 @@ pub fn require_role(user_role: &str, required_roles: &[&str]) -> Result<(), Auth
 /// Authentication endpoints
 pub mod endpoints {
     use super::*;
-    use crate::database::DatabaseService;
     use argon2::{Argon2, PasswordHash, PasswordVerifier};
     use axum::extract::State;
     
@@ -270,8 +270,12 @@ pub mod endpoints {
         State(app_state): State<crate::AppState>,
         Json(request): Json<LoginRequest>,
     ) -> Result<Json<TokenResponse>, AuthError> {
+        // Get database service (required for login)
+        let db = app_state.db.as_ref()
+            .ok_or(AuthError::InvalidToken)?;
+
         // Get user from database
-        let user = app_state.db
+        let user = db
             .get_user_by_username(&request.username)
             .await
             .map_err(|_| AuthError::InvalidToken)?
@@ -290,7 +294,7 @@ pub mod endpoints {
         }
         
         // Update last login
-        let _ = app_state.db.update_user_last_login(user.id).await;
+        let _ = db.update_user_last_login(user.id).await;
         
         // Generate tokens
         let jwt_service = JwtService::new(&app_state.config.jwt_secret);
@@ -311,13 +315,17 @@ pub mod endpoints {
         State(app_state): State<crate::AppState>,
         Json(request): Json<RefreshRequest>,
     ) -> Result<Json<TokenResponse>, AuthError> {
+        // Get database service (required for refresh)
+        let db = app_state.db.as_ref()
+            .ok_or(AuthError::InvalidToken)?;
+
         let jwt_service = JwtService::new(&app_state.config.jwt_secret);
-        
+
         let tokens = jwt_service
-            .refresh_access_token(&request.refresh_token, &app_state.db)
+            .refresh_access_token(&request.refresh_token, db)
             .await
             .map_err(|_| AuthError::InvalidToken)?;
-        
+
         Ok(Json(tokens))
     }
     

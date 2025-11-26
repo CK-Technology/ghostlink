@@ -1,8 +1,7 @@
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
 
 #[cfg(feature = "nvenc")]
 use ffmpeg_next as ffmpeg;
@@ -358,11 +357,13 @@ impl VideoEncoder for NvencEncoder {
         {
             return Err(GhostLinkError::Other("NVENC support not compiled".to_string()));
         }
-        
-        self.is_initialized = true;
-        info!("NVENC {:?} encoder initialized successfully", self.codec_type);
-        
-        Ok(())
+
+        #[cfg(feature = "nvenc")]
+        {
+            self.is_initialized = true;
+            info!("NVENC {:?} encoder initialized successfully", self.codec_type);
+            Ok(())
+        }
     }
 
     async fn encode_frame(&mut self, frame: &Frame) -> Result<Vec<u8>> {
@@ -408,16 +409,16 @@ impl VideoEncoder for NvencEncoder {
 
     async fn cleanup(&mut self) -> Result<()> {
         info!("Cleaning up NVENC {:?} encoder", self.codec_type);
-        
-        if let Some(context_arc) = self.encoder_context.take() {
+
+        if let Some(_context_arc) = self.encoder_context.take() {
             #[cfg(feature = "nvenc")]
             {
-                let mut context = context_arc.lock();
+                let mut context = _context_arc.lock();
                 // Flush encoder
                 if let Err(e) = context.ffmpeg_context.send_eof() {
                     warn!("Failed to flush NVENC encoder: {}", e);
                 }
-                
+
                 // Cleanup CUDA context
                 if let Some(_cuda_ctx) = context.cuda_context.take() {
                     debug!("Cleaning up CUDA context");

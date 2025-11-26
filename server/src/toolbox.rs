@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::fs;
 use uuid::Uuid;
-use tracing::{info, warn, error, debug};
+use tracing::{info, debug};
 
 use crate::AppState;
 
@@ -128,6 +128,7 @@ pub enum ExecutionStatus {
 }
 
 /// Built-in tool categories
+#[allow(dead_code)]
 pub const TOOL_CATEGORIES: &[&str] = &[
     "System Information",
     "Network Tools", 
@@ -539,8 +540,8 @@ pub async fn api_execute_tool(
 
 /// Upload custom tool
 pub async fn api_upload_tool(
-    State(app_state): State<AppState>,
-    mut multipart: Multipart,
+    State(_app_state): State<AppState>,
+    _multipart: Multipart,
 ) -> Response {
     // TODO: Handle multipart form data for tool upload
     // This would extract the tool definition JSON and binary file

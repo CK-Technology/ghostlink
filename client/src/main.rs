@@ -1,6 +1,4 @@
 use clap::{Parser, Subcommand};
-use std::time::Duration;
-use tokio::time::sleep;
 use tracing::{info, warn, error};
 
 mod error;
@@ -14,7 +12,7 @@ mod input;
 
 mod toolbox;
 
-use error::{Result, GhostLinkError};
+use error::Result;
 
 use crate::{
     agent::Agent,
@@ -227,13 +225,13 @@ async fn launch_session_window(session_id: String, server_url: String, token: St
     
     // Initialize toolbox for this session
     use crate::toolbox::{ToolboxManager, ToolboxConfig};
-    use crate::session::{SessionWindow, SessionTab};
+    use crate::session::SessionWindow;
     
     let toolbox_config = ToolboxConfig::default();
     let toolbox = ToolboxManager::new(toolbox_config).await?;
     
     // Create ScreenConnect-style session window
-    let mut session_window = SessionWindow::new(session_id.clone(), server_url.clone(), token.clone(), toolbox).await?;
+    let session_window = SessionWindow::new(session_id.clone(), server_url.clone(), token.clone(), toolbox).await?;
     
     info!("Session window created with tabs: Start, General, Timeline, Messages, Commands, Notes");
     
@@ -388,8 +386,9 @@ async fn handle_toolbox_action(action: ToolboxAction) -> Result<()> {
                 info!("Removed tool: {}", tool);
             } else {
                 let tools = toolbox.list_tools();
-                if let Some(found_tool) = tools.iter().find(|t| t.name == tool) {
-                    toolbox.remove_tool(&found_tool.id)?;
+                if let Some(tool_id) = tools.iter().find(|t| t.name == tool).map(|t| t.id) {
+                    drop(tools); // Release the borrow
+                    toolbox.remove_tool(&tool_id)?;
                     info!("Removed tool: {}", tool);
                 } else {
                     warn!("Tool not found: {}", tool);

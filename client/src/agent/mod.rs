@@ -1,8 +1,10 @@
+#![allow(dead_code)]
+
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::{interval, Duration};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use crate::config::ClientConfig;
 use crate::connection::RelayConnection;

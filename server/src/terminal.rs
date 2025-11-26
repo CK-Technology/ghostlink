@@ -7,13 +7,11 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, Command as AsyncCommand};
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn, debug, error};
 
 use crate::AppState;
 
@@ -615,7 +613,7 @@ impl TerminalManager {
 
 /// WebSocket handler for real-time terminal interaction
 pub async fn handle_terminal_websocket(
-    mut socket: WebSocket,
+    socket: WebSocket,
     session_id: Uuid,
     terminal_manager: Arc<TerminalManager>,
 ) {
@@ -772,8 +770,9 @@ pub async fn websocket_terminal_handler(
     State(app_state): State<AppState>,
     Path(session_id): Path<Uuid>,
 ) -> Response {
+    let terminal_manager = app_state.device_manager.terminal_manager.clone();
     ws.on_upgrade(move |socket| {
-        handle_terminal_websocket(socket, session_id, app_state.device_manager.terminal_manager)
+        handle_terminal_websocket(socket, session_id, terminal_manager)
     })
 }
 

@@ -1,6 +1,9 @@
+#![allow(dead_code)]
+
 use crate::{
     error::{GhostLinkError, Result},
     capture::{
+        ScreenCapturer,
         x11_fast::X11FastCapturer,
         wayland_fast::WaylandFastCapturer,
         frame_protocol::{FrameMessage, VideoCodec, QualityLevel},
@@ -10,7 +13,7 @@ use crate::{
 use std::{
     collections::HashMap,
     sync::{Arc, atomic::{AtomicU32, Ordering}},
-    time::{Duration, SystemTime},
+    time::Duration,
 };
 use tokio::sync::{RwLock, mpsc, broadcast};
 use tracing::{debug, error, info, warn, trace};
@@ -436,7 +439,7 @@ impl MonitorManager {
     async fn detect_x11_monitors(&self) -> Result<HashMap<u32, MonitorInfo>> {
         use x11rb::{
             connection::Connection,
-            protocol::{randr, xproto},
+            protocol::randr,
             rust_connection::RustConnection,
         };
         
@@ -676,7 +679,7 @@ pub struct X11MultiMonitorCapturer {
 }
 
 impl X11MultiMonitorCapturer {
-    pub async fn new(monitors: &HashMap<u32, MonitorInfo>, selection: &MonitorSelection) -> Result<Self> {
+    pub async fn new(_monitors: &HashMap<u32, MonitorInfo>, selection: &MonitorSelection) -> Result<Self> {
         let capturer = X11FastCapturer::new().await
             .map_err(|e| GhostLinkError::Other(format!("Failed to create X11 capturer: {}", e)))?;
         
@@ -712,18 +715,20 @@ impl MultiMonitorCapturer for X11MultiMonitorCapturer {
                     frame.width,
                     frame.height,
                     frame.data,
+                    frame.timestamp,
+                    self.stats.frames_captured % 60 == 0, // keyframe every ~60 frames
                 )))
             }
             Err(_) => Ok(None), // Return None if capture fails
         }
     }
-    
+
     async fn update_selection(&mut self, selection: &MonitorSelection) -> Result<()> {
         self.selection = selection.clone();
         // TODO: Update capture region based on selection
         Ok(())
     }
-    
+
     fn get_stats(&self) -> CaptureStats {
         self.stats.clone()
     }
@@ -741,7 +746,7 @@ pub struct WaylandMultiMonitorCapturer {
 }
 
 impl WaylandMultiMonitorCapturer {
-    pub async fn new(monitors: &HashMap<u32, MonitorInfo>, selection: &MonitorSelection) -> Result<Self> {
+    pub async fn new(_monitors: &HashMap<u32, MonitorInfo>, selection: &MonitorSelection) -> Result<Self> {
         let capturer = WaylandFastCapturer::new().await
             .map_err(|e| GhostLinkError::Other(format!("Failed to create Wayland capturer: {}", e)))?;
         
@@ -758,11 +763,11 @@ impl MultiMonitorCapturer for WaylandMultiMonitorCapturer {
         self.selection = selection.clone();
         self.capturer.initialize().await
     }
-    
+
     async fn stop_capture(&mut self) -> Result<()> {
         self.capturer.cleanup().await
     }
-    
+
     async fn capture_frame(&mut self) -> Result<Option<FrameMessage>> {
         match self.capturer.capture_frame().await {
             Ok(frame) => {
@@ -777,15 +782,17 @@ impl MultiMonitorCapturer for WaylandMultiMonitorCapturer {
                     frame.width,
                     frame.height,
                     frame.data,
+                    frame.timestamp,
+                    self.stats.frames_captured % 60 == 0, // keyframe every ~60 frames
                 )))
             }
             Err(_) => Ok(None), // Return None if capture fails
         }
     }
-    
+
     async fn update_selection(&mut self, selection: &MonitorSelection) -> Result<()> {
         self.selection = selection.clone();
-        // TODO: Update capture region based on selection  
+        // TODO: Update capture region based on selection
         Ok(())
     }
     

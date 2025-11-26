@@ -1,7 +1,6 @@
 use tokio::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
-use crate::error::Result;
 
 /// Manages heartbeat communication with the server
 pub struct HeartbeatManager {

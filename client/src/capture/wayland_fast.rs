@@ -2,9 +2,7 @@ use async_trait::async_trait;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, error, info, warn};
-use wayland_client::{protocol::*, Connection, Dispatch, QueueHandle};
-use wayland_protocols::xdg::xdg_output::zv1::client::*;
+use tracing::{info, warn};
 use crossbeam_channel::{bounded, Receiver, Sender};
 
 use crate::capture::{DisplayInfo, Frame, PixelFormat, ScreenCapturer};
@@ -290,7 +288,7 @@ impl ScreenCapturer for WaylandFastCapturer {
         // Enforce frame rate limit for consistent 60fps
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_frame_time);
-        if elapsed.as_nanos() < FRAME_TIME_NS {
+        if elapsed.as_nanos() < FRAME_TIME_NS as u128 {
             // Sleep for remaining time to maintain 60fps
             tokio::time::sleep(Duration::from_nanos(FRAME_TIME_NS - elapsed.as_nanos() as u64)).await;
         }
@@ -328,7 +326,10 @@ impl ScreenCapturer for WaylandFastCapturer {
             height: self.height,
             pixel_format: PixelFormat::RGBA,
             stride: self.width * 4,
-            timestamp: now.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
         })
     }
     

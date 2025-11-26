@@ -5,10 +5,7 @@ use tracing::{debug, error, info, trace, warn};
 use x11rb::{
     connection::Connection,
     protocol::{
-        xproto::{
-            ButtonPressEvent, ButtonReleaseEvent, KeyPressEvent, KeyReleaseEvent, 
-            MotionNotifyEvent, ConnectionExt, SendEventDest
-        },
+        xproto::ConnectionExt,
         xtest::ConnectionExt as XTestConnectionExt,
     },
     rust_connection::RustConnection,

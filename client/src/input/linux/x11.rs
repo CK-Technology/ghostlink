@@ -1,7 +1,5 @@
 use anyhow::Result;
-use std::ffi::CString;
-use std::ptr;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::input::{InputHandler, KeyCode, MouseButton};
 

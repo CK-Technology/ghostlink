@@ -8,10 +8,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
-use tokio::net::TcpListener;
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
-use tracing::{info, warn, error, debug};
+use tracing::{info, debug};
 
 use crate::{AppState, device_manager::DeviceManager};
 
@@ -22,6 +21,7 @@ pub struct DirectConnectManager {
     /// Map of active direct connection sessions
     sessions: Arc<RwLock<HashMap<Uuid, DirectSession>>>,
     /// Broadcast channel for relay messages
+    #[allow(dead_code)]
     relay_tx: mpsc::UnboundedSender<RelayMessage>,
 }
 
@@ -37,7 +37,9 @@ pub struct ClientInfo {
     pub relay_server: Option<String>,
 }
 
+/// Represents an active direct connection session between two clients
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct DirectSession {
     pub session_id: Uuid,
     pub client_a: String,
@@ -221,7 +223,7 @@ impl DirectConnectManager {
     }
     
     /// Generate connection information for clients
-    async fn generate_connection_info(&self, client_a: &ClientInfo, client_b: &ClientInfo) -> ConnectionInfo {
+    async fn generate_connection_info(&self, _client_a: &ClientInfo, client_b: &ClientInfo) -> ConnectionInfo {
         let mut direct_endpoints = Vec::new();
         
         // Add direct IP endpoints if possible
@@ -400,6 +402,16 @@ pub async fn api_direct_connect_stats(
     Json(stats)
 }
 
+/// Handle direct relay WebSocket connection
+async fn handle_direct_relay_websocket(
+    _socket: axum::extract::ws::WebSocket,
+    client_id: String,
+    _device_manager: Arc<DeviceManager>,
+) {
+    tracing::info!("Direct relay WebSocket for client: {}", client_id);
+    // TODO: Implement direct relay WebSocket handling
+}
+
 /// Handle relay messages via WebSocket
 pub async fn websocket_direct_relay_handler(
     ws: WebSocketUpgrade,
@@ -407,10 +419,10 @@ pub async fn websocket_direct_relay_handler(
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
     let client_id = params.get("client_id").cloned();
-    
+
     ws.on_upgrade(move |socket| async move {
         if let Some(client_id) = client_id {
-            handle_direct_relay_websocket(socket, client_id, app_state.device_manager).await;
+            handle_direct_relay_websocket(socket, client_id, app_state.device_manager.clone()).await;
         }
     })
 }

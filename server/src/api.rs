@@ -4,12 +4,12 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::HashMap;
 use uuid::Uuid;
 use crate::{
-    device_manager::{DeviceManager, SessionRequest, DeviceRegistration},
-    models::{SessionType, Agent, Session},
+    device_manager::{SessionRequest, DeviceRegistration},
+    models::SessionType,
     AppState,
 };
 
@@ -180,9 +180,16 @@ pub async fn websocket_device_handler(
     State(app_state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
-    let agent_id = params.get("agent_id").cloned();
+    let agent_id = match params.get("agent_id").cloned() {
+        Some(id) => id,
+        None => {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "error": "Missing agent_id parameter"
+            }))).into_response();
+        }
+    };
     let session_type = params.get("type").cloned().unwrap_or_else(|| "device".to_string());
-    
+
     ws.on_upgrade(move |socket| async move {
         crate::relay::handle_websocket(socket, agent_id, session_type, app_state.device_manager).await;
     })
@@ -194,9 +201,16 @@ pub async fn websocket_session_handler(
     State(app_state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
-    let session_id = params.get("session_id").cloned();
+    let session_id = match params.get("session_id").cloned() {
+        Some(id) => id,
+        None => {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "error": "Missing session_id parameter"
+            }))).into_response();
+        }
+    };
     let session_type = params.get("type").cloned().unwrap_or_else(|| "viewer".to_string());
-    
+
     ws.on_upgrade(move |socket| async move {
         crate::relay::handle_session_websocket(socket, session_id, session_type, app_state.device_manager).await;
     })

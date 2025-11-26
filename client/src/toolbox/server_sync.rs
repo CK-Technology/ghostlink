@@ -3,7 +3,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tokio::time::{Duration, interval};
-use tracing::{debug, info, warn, error};
+use tracing::{debug, info, error};
 use uuid::Uuid;
 
 use super::{Tool, ToolboxConfig};

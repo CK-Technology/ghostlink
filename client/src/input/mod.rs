@@ -1,13 +1,23 @@
+#![allow(dead_code)]
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 
 use crate::session::SessionType;
 
 #[cfg(target_os = "linux")]
 pub mod linux;
+
+#[cfg(target_os = "linux")]
+pub mod wayland_portal;
+
+// Re-export the Portal-based input controller for external use
+#[cfg(target_os = "linux")]
+#[allow(unused_imports)]
+pub use wayland_portal::{RemoteDesktopPortal, KeyState, ButtonState, Axis};
 
 #[cfg(target_os = "windows")]
 pub mod windows;
@@ -311,7 +321,7 @@ pub enum InputEvent {
 impl InputController {
     /// Create new input controller
     pub async fn new(session_type: SessionType) -> Result<Self> {
-        let mut controller = Self::create_platform_controller().await?;
+        let controller = Self::create_platform_controller().await?;
         
         let mut input_controller = Self {
             controller,
@@ -484,22 +494,4 @@ pub mod input_protocol;
 pub mod input_service;
 
 // Re-exports for convenience
-pub use input_protocol::{
-    InputEvent as NewInputEvent, 
-    InputStats, 
-    MouseButtonType, 
-    KeyType, 
-    SpecialKeyType, 
-    ModifierFlags, 
-    ScrollDirectionType
-};
-pub use input_service::{InputService, InputServiceConfig};
 
-#[cfg(target_os = "linux")]
-pub use x11_input::{
-    X11InputInjector, 
-    MouseButton as X11MouseButton, 
-    ScrollDirection, 
-    SpecialKey, 
-    KeyModifiers
-};

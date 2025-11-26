@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, Query, State, WebSocketUpgrade},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::Command;
 use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::RwLock;
 use uuid::Uuid;
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn};
 
 use crate::AppState;
 
@@ -372,56 +372,67 @@ impl PamManager {
         &self,
         request_id: Uuid,
     ) -> Result<ElevatedSession, String> {
-        let requests = self.elevation_requests.read().await;
-        let request = requests.get(&request_id)
-            .ok_or_else(|| format!("Elevation request {} not found", request_id))?;
-        
-        if request.status != ElevationStatus::Approved {
-            return Err(format!("Elevation request not approved (status: {:?})", request.status));
+        // First, get the data we need from the read lock
+        let (user_id, elevation_type, session_id, status) = {
+            let requests = self.elevation_requests.read().await;
+            let request = requests.get(&request_id)
+                .ok_or_else(|| format!("Elevation request {} not found", request_id))?;
+            (
+                request.user_id.clone(),
+                request.elevation_type.clone(),
+                request.session_id,
+                request.status.clone(),
+            )
+        };
+
+        if status != ElevationStatus::Approved {
+            return Err(format!("Elevation request not approved (status: {:?})", status));
         }
-        
+
         let config = self.config.read().await;
-        
+
         let elevated_session = ElevatedSession {
             session_id: Uuid::new_v4(),
             elevation_request_id: request_id,
-            user_id: request.user_id.clone(),
-            elevated_user: self.get_elevated_user(&request.elevation_type),
+            user_id: user_id.clone(),
+            elevated_user: self.get_elevated_user(&elevation_type),
             started_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now() + chrono::Duration::hours(config.max_elevation_duration_hours as i64),
             processes: Vec::new(),
             commands_executed: Vec::new(),
             activity_log: Vec::new(),
         };
-        
+        drop(config);
+
         // Store elevated session
         {
             let mut sessions = self.elevated_sessions.write().await;
             sessions.insert(elevated_session.session_id, elevated_session.clone());
         }
-        
+
         // Update request status
-        drop(requests);
-        let mut requests = self.elevation_requests.write().await;
-        if let Some(request) = requests.get_mut(&request_id) {
-            request.status = ElevationStatus::Active;
+        {
+            let mut requests = self.elevation_requests.write().await;
+            if let Some(request) = requests.get_mut(&request_id) {
+                request.status = ElevationStatus::Active;
+            }
         }
-        
+
         // Create audit entry
         self.create_audit_entry(
             request_id,
-            request.session_id,
-            &request.user_id,
+            session_id,
+            &user_id,
             "elevated_session_started",
             serde_json::json!({
                 "elevated_session_id": elevated_session.session_id,
                 "elevated_user": elevated_session.elevated_user
             }),
         ).await;
-        
-        info!("Started elevated session {} for user {}", 
-              elevated_session.session_id, request.user_id);
-        
+
+        info!("Started elevated session {} for user {}",
+              elevated_session.session_id, user_id);
+
         Ok(elevated_session)
     }
     

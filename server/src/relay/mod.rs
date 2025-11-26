@@ -1,100 +1,63 @@
+//! GhostLink Relay Module
+//!
+//! Handles WebSocket connections between agents (remote devices) and technicians (operators).
+//! Supports both direct P2P connections and relayed connections through the server.
+
 use anyhow::Result;
-use axum::{
-    extract::{ws::WebSocket, WebSocketUpgrade, State, Path},
-    response::Response,
-    routing::{get, post},
-    Router,
-};
+use axum::extract::ws::{Message, WebSocket};
+use chrono::{DateTime, Utc};
+use futures_util::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    sync::Arc,
-    time::{Duration, Instant},
-};
-use tokio::sync::{broadcast, RwLock};
-use tracing::{debug, info, warn, error};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use tokio::sync::{mpsc, RwLock};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-pub mod rendezvous;
+use crate::device_manager::DeviceManager;
+
 pub mod connection_broker;
 pub mod load_balancer;
+pub mod rendezvous;
 
-use crate::auth::AuthUser;
+// ============================================================================
+// Relay Message Types
+// ============================================================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RelayNode {
-    pub id: Uuid,
-    pub address: SocketAddr,
-    pub region: String,
-    pub capacity: u32,
-    pub current_load: u32,
-    pub health_score: f32,
-    pub last_heartbeat: Instant,
-    pub features: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionRoute {
-    pub session_id: String,
-    pub agent_id: String,
-    pub technician_id: String,
-    pub relay_node: Option<Uuid>,
-    pub connection_type: ConnectionType,
-    pub created_at: Instant,
-    pub last_activity: Instant,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ConnectionType {
-    Direct,         // P2P connection established
-    RelayedTcp,     // TCP through relay
-    RelayedUdp,     // UDP through relay (for video/audio)
-    Hybrid,         // Mixed connection types
-}
-
+/// Messages sent between agents and technicians through the relay
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelayMessage {
     pub id: Uuid,
-    pub session_id: String,
-    pub from: String,
-    pub to: String,
     pub message_type: RelayMessageType,
     pub payload: Vec<u8>,
-    pub timestamp: Instant,
+    pub timestamp: DateTime<Utc>,
     pub priority: MessagePriority,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RelayMessageType {
-    // P2P Coordination (10x better than RustDesk)
-    P2PHandshake,
-    P2PResponse,
-    NATTraversal,
-    ConnectionTest,
-    
-    // Session Management (ScreenConnect-style)
+    // Screen sharing
+    ScreenFrame,
+    ScreenConfig,
+
+    // Input forwarding
+    MouseEvent,
+    KeyboardEvent,
+    TouchEvent,
+
+    // Clipboard
+    ClipboardData,
+    ClipboardRequest,
+
+    // File transfer
+    FileChunk,
+    FileMetadata,
+    FileTransferControl,
+
+    // Control
     SessionStart,
     SessionEnd,
-    SessionPause,
-    SessionResume,
-    
-    // Real-time Data
-    VideoFrame,
-    AudioFrame,
-    InputEvent,
-    ClipboardSync,
-    
-    // File Operations
-    FileTransferStart,
-    FileTransferChunk,
-    FileTransferComplete,
-    
-    // Control Messages
-    ControlCommand,
-    ToolExecution,
-    SystemInfo,
-    
+    ConnectionInfo,
+
     // Health & Monitoring
     Heartbeat,
     LatencyProbe,
@@ -103,369 +66,429 @@ pub enum RelayMessageType {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MessagePriority {
-    Critical = 0,   // Control commands, errors
-    High = 1,       // Input events, tool execution
-    Normal = 2,     // Video frames, clipboard
-    Low = 3,        // Heartbeats, background data
+    Critical = 0, // Control commands, errors
+    High = 1,     // Input events, tool execution
+    Normal = 2,   // Video frames, clipboard
+    Low = 3,      // Heartbeats, background data
 }
 
-/// Next-generation relay system - 10x better than RustDesk
-pub struct GhostLinkRelay {
-    /// Global session routing table
+// ============================================================================
+// Relay Node & Session Routing
+// ============================================================================
+
+/// A relay node in the distributed relay network
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelayNode {
+    pub id: Uuid,
+    pub address: SocketAddr,
+    pub region: String,
+    pub capacity: u32,
+    pub current_load: u32,
+    pub health_score: f32,
+    pub last_heartbeat: DateTime<Utc>,
+    pub features: Vec<String>,
+}
+
+/// Session routing information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionRoute {
+    pub session_id: String,
+    pub agent_id: String,
+    pub technician_id: String,
+    pub relay_node: Option<Uuid>,
+    pub connection_type: ConnectionType,
+    pub created_at: DateTime<Utc>,
+    pub last_activity: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ConnectionType {
+    Direct,      // P2P connection
+    RelayedTcp,  // Through relay via TCP
+    RelayedUdp,  // Through relay via UDP (faster, less reliable)
+    Hybrid,      // Try UDP first, fall back to TCP
+}
+
+// ============================================================================
+// WebSocket Handlers (used by main.rs)
+// ============================================================================
+
+/// Handle WebSocket connections for devices (agents)
+pub async fn handle_websocket(
+    socket: WebSocket,
+    agent_id: String,
+    session_type: String,
+    device_manager: Arc<DeviceManager>,
+) {
+    info!(
+        "Agent WebSocket connected: {} (type: {})",
+        agent_id, session_type
+    );
+
+    // Parse agent UUID
+    let agent_uuid = match Uuid::parse_str(&agent_id) {
+        Ok(uuid) => uuid,
+        Err(e) => {
+            error!("Invalid agent ID {}: {}", agent_id, e);
+            return;
+        }
+    };
+
+    // Split socket into sender and receiver
+    let (mut sender, mut receiver) = socket.split();
+
+    // Create channel for sending messages to this socket
+    let (_tx, mut rx) = mpsc::unbounded_channel::<Message>();
+
+    // Spawn task to forward messages from channel to socket sender
+    let mut send_task = tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            if sender.send(msg).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Handle incoming messages from agent
+    let device_manager_clone = device_manager.clone();
+    let agent_id_clone = agent_id.clone();
+    let mut recv_task = tokio::spawn(async move {
+        while let Some(result) = receiver.next().await {
+            match result {
+                Ok(msg) => {
+                    if let Err(e) =
+                        handle_agent_message(&device_manager_clone, &agent_id_clone, msg).await
+                    {
+                        warn!("Error handling agent message: {}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("WebSocket error from agent {}: {}", agent_id_clone, e);
+                    break;
+                }
+            }
+        }
+    });
+
+    // Wait for either task to complete
+    tokio::select! {
+        _ = (&mut send_task) => recv_task.abort(),
+        _ = (&mut recv_task) => send_task.abort(),
+    }
+
+    // Cleanup
+    device_manager.disconnect_device(agent_uuid).await;
+    info!("Agent WebSocket disconnected: {}", agent_id);
+}
+
+/// Handle WebSocket connections for sessions (technicians viewing/controlling agents)
+pub async fn handle_session_websocket(
+    socket: WebSocket,
+    session_id: String,
+    session_type: String,
+    device_manager: Arc<DeviceManager>,
+) {
+    info!(
+        "Session WebSocket connected: {} (type: {})",
+        session_id, session_type
+    );
+
+    // Parse session UUID
+    let session_uuid = match Uuid::parse_str(&session_id) {
+        Ok(uuid) => uuid,
+        Err(e) => {
+            error!("Invalid session ID {}: {}", session_id, e);
+            return;
+        }
+    };
+
+    // Split socket into sender and receiver
+    let (mut sender, mut receiver) = socket.split();
+
+    // Create channel for sending messages to this socket
+    let (_tx, mut rx) = mpsc::unbounded_channel::<Message>();
+
+    // Spawn task to forward messages from channel to socket sender
+    let mut send_task = tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            if sender.send(msg).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Handle incoming messages from technician
+    let device_manager_clone = device_manager.clone();
+    let session_id_clone = session_id.clone();
+    let mut recv_task = tokio::spawn(async move {
+        while let Some(result) = receiver.next().await {
+            match result {
+                Ok(msg) => {
+                    if let Err(e) =
+                        handle_session_message(&device_manager_clone, &session_id_clone, msg).await
+                    {
+                        warn!("Error handling session message: {}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("WebSocket error from session {}: {}", session_id_clone, e);
+                    break;
+                }
+            }
+        }
+    });
+
+    // Wait for either task to complete
+    tokio::select! {
+        _ = (&mut send_task) => recv_task.abort(),
+        _ = (&mut recv_task) => send_task.abort(),
+    }
+
+    // Cleanup
+    let _ = device_manager.end_session(session_uuid).await;
+    info!("Session WebSocket disconnected: {}", session_id);
+}
+
+// ============================================================================
+// Message Handlers
+// ============================================================================
+
+/// Handle messages received from agents
+async fn handle_agent_message(
+    device_manager: &Arc<DeviceManager>,
+    agent_id: &str,
+    message: Message,
+) -> Result<()> {
+    match message {
+        Message::Binary(data) => {
+            // Binary data is typically screen frames
+            if let Ok(agent_uuid) = Uuid::parse_str(agent_id) {
+                device_manager
+                    .broadcast_screen_frame(agent_uuid, data)
+                    .await;
+            }
+        }
+        Message::Text(text) => {
+            // Text messages are typically control commands
+            debug!("Agent {} sent text: {}", agent_id, text);
+
+            // Parse as JSON command
+            if let Ok(cmd) = serde_json::from_str::<serde_json::Value>(&text) {
+                handle_agent_command(device_manager, agent_id, cmd).await?;
+            }
+        }
+        Message::Ping(_data) => {
+            // Update heartbeat
+            if let Ok(agent_uuid) = Uuid::parse_str(agent_id) {
+                let _ = device_manager.update_device_heartbeat(agent_uuid).await;
+            }
+            debug!("Ping from agent {}", agent_id);
+        }
+        Message::Pong(_) => {
+            debug!("Pong from agent {}", agent_id);
+        }
+        Message::Close(_) => {
+            info!("Agent {} requested close", agent_id);
+        }
+    }
+    Ok(())
+}
+
+/// Handle messages received from sessions (technicians)
+async fn handle_session_message(
+    device_manager: &Arc<DeviceManager>,
+    session_id: &str,
+    message: Message,
+) -> Result<()> {
+    match message {
+        Message::Binary(data) => {
+            // Binary data from technician is typically input events
+            if let Ok(session_uuid) = Uuid::parse_str(session_id) {
+                if let Err(e) = device_manager
+                    .forward_input_event(session_uuid, data)
+                    .await
+                {
+                    warn!("Failed to forward input: {}", e);
+                }
+            }
+        }
+        Message::Text(text) => {
+            // Text messages are typically control commands
+            debug!("Session {} sent text: {}", session_id, text);
+
+            if let Ok(cmd) = serde_json::from_str::<serde_json::Value>(&text) {
+                handle_session_command(device_manager, session_id, cmd).await?;
+            }
+        }
+        Message::Ping(_) => {
+            debug!("Ping from session {}", session_id);
+        }
+        Message::Pong(_) => {
+            debug!("Pong from session {}", session_id);
+        }
+        Message::Close(_) => {
+            info!("Session {} requested close", session_id);
+        }
+    }
+    Ok(())
+}
+
+/// Handle agent control commands
+async fn handle_agent_command(
+    device_manager: &Arc<DeviceManager>,
+    agent_id: &str,
+    cmd: serde_json::Value,
+) -> Result<()> {
+    let cmd_type = cmd.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+    match cmd_type {
+        "heartbeat" => {
+            if let Ok(agent_uuid) = Uuid::parse_str(agent_id) {
+                let _ = device_manager.update_device_heartbeat(agent_uuid).await;
+            }
+        }
+        "capabilities" => {
+            // Agent is reporting its capabilities
+            debug!("Agent {} capabilities: {:?}", agent_id, cmd.get("data"));
+        }
+        "screen_config" => {
+            // Agent is reporting screen configuration
+            debug!("Agent {} screen config: {:?}", agent_id, cmd.get("data"));
+        }
+        "error" => {
+            warn!(
+                "Agent {} error: {:?}",
+                agent_id,
+                cmd.get("message").and_then(|v| v.as_str())
+            );
+        }
+        _ => {
+            debug!("Unknown command from agent {}: {}", agent_id, cmd_type);
+        }
+    }
+    Ok(())
+}
+
+/// Handle session control commands
+async fn handle_session_command(
+    _device_manager: &Arc<DeviceManager>,
+    session_id: &str,
+    cmd: serde_json::Value,
+) -> Result<()> {
+    let cmd_type = cmd.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+    match cmd_type {
+        "request_screen" => {
+            // Technician is requesting screen capture
+            debug!("Session {} requesting screen", session_id);
+        }
+        "set_quality" => {
+            // Technician is adjusting quality settings
+            let quality = cmd.get("quality").and_then(|v| v.as_u64()).unwrap_or(80);
+            debug!("Session {} set quality: {}", session_id, quality);
+        }
+        "request_control" => {
+            // Technician is requesting control access
+            debug!("Session {} requesting control", session_id);
+        }
+        "release_control" => {
+            // Technician is releasing control
+            debug!("Session {} releasing control", session_id);
+        }
+        _ => {
+            debug!(
+                "Unknown command from session {}: {}",
+                session_id, cmd_type
+            );
+        }
+    }
+    Ok(())
+}
+
+// ============================================================================
+// Relay Manager (for advanced routing)
+// ============================================================================
+
+/// Manages relay connections and session routing.
+/// This is used for advanced routing when P2P connections fail.
+#[allow(dead_code)]
+pub struct RelayManager {
+    /// Active sessions indexed by session ID
     sessions: Arc<RwLock<HashMap<String, SessionRoute>>>,
-    
-    /// Connected relay nodes for load distribution
+    /// Available relay nodes
     relay_nodes: Arc<RwLock<HashMap<Uuid, RelayNode>>>,
-    
-    /// Active WebSocket connections
-    connections: Arc<RwLock<HashMap<String, ActiveConnection>>>,
-    
-    /// Broadcast channel for real-time updates
-    broadcast_tx: broadcast::Sender<RelayMessage>,
-    
     /// Load balancer for optimal routing
     load_balancer: Arc<load_balancer::LoadBalancer>,
-    
-    /// Connection quality monitor
-    quality_monitor: Arc<QualityMonitor>,
 }
 
-#[derive(Debug)]
-struct ActiveConnection {
-    websocket: Option<WebSocket>,
-    user_id: String,
-    connection_type: String, // "agent" or "technician"
-    last_activity: Instant,
-    message_queue: Vec<RelayMessage>,
-    quality_stats: ConnectionStats,
-}
-
-#[derive(Debug, Clone)]
-struct ConnectionStats {
-    latency_ms: u32,
-    bandwidth_kbps: u32,
-    packet_loss: f32,
-    jitter_ms: u32,
-    quality_score: f32,
-}
-
-#[derive(Debug)]
-struct QualityMonitor {
-    connection_metrics: Arc<RwLock<HashMap<String, ConnectionStats>>>,
-}
-
-impl GhostLinkRelay {
+#[allow(dead_code)]
+impl RelayManager {
     pub fn new() -> Self {
-        let (broadcast_tx, _) = broadcast::channel(10000);
-        
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             relay_nodes: Arc::new(RwLock::new(HashMap::new())),
-            connections: Arc::new(RwLock::new(HashMap::new())),
-            broadcast_tx,
             load_balancer: Arc::new(load_balancer::LoadBalancer::new()),
-            quality_monitor: Arc::new(QualityMonitor {
-                connection_metrics: Arc::new(RwLock::new(HashMap::new())),
-            }),
         }
     }
-    
-    /// Create router for relay endpoints
-    pub fn router(self: Arc<Self>) -> Router {
-        Router::new()
-            .route("/ws/agent/:agent_id", get(Self::handle_agent_connection))
-            .route("/ws/technician/:user_id", get(Self::handle_technician_connection))
-            .route("/api/sessions", get(Self::list_sessions))
-            .route("/api/sessions/:session_id/route", post(Self::create_session_route))
-            .route("/api/relay/nodes", get(Self::list_relay_nodes))
-            .route("/api/relay/health", get(Self::health_check))
-            .with_state(self)
-    }
-    
-    /// Handle agent WebSocket connections
-    async fn handle_agent_connection(
-        ws: WebSocketUpgrade,
-        Path(agent_id): Path<String>,
-        State(relay): State<Arc<Self>>,
-    ) -> Response {
-        info!("Agent connecting: {}", agent_id);
-        
-        ws.on_upgrade(move |socket| async move {
-            if let Err(e) = relay.handle_agent_websocket(socket, agent_id).await {
-                error!("Agent WebSocket error: {}", e);
-            }
-        })
-    }
-    
-    /// Handle technician WebSocket connections
-    async fn handle_technician_connection(
-        ws: WebSocketUpgrade,
-        Path(user_id): Path<String>,
-        State(relay): State<Arc<Self>>,
-    ) -> Response {
-        info!("Technician connecting: {}", user_id);
-        
-        ws.on_upgrade(move |socket| async move {
-            if let Err(e) = relay.handle_technician_websocket(socket, user_id).await {
-                error!("Technician WebSocket error: {}", e);
-            }
-        })
-    }
-    
-    async fn handle_agent_websocket(&self, mut socket: WebSocket, agent_id: String) -> Result<()> {
-        // Register agent connection
-        self.register_connection(&agent_id, "agent").await?;
-        
-        // Start quality monitoring
-        self.start_quality_monitoring(&agent_id).await;
-        
-        // Message handling loop
-        loop {
-            tokio::select! {
-                // Handle incoming messages from agent
-                msg = socket.recv() => {
-                    match msg {
-                        Some(Ok(msg)) => {
-                            if let Err(e) = self.handle_agent_message(&agent_id, msg).await {
-                                error!("Error handling agent message: {}", e);
-                            }
-                        }
-                        Some(Err(e)) => {
-                            error!("WebSocket error from agent {}: {}", agent_id, e);
-                            break;
-                        }
-                        None => {
-                            info!("Agent {} disconnected", agent_id);
-                            break;
-                        }
-                    }
-                }
-                
-                // Send queued messages to agent
-                _ = tokio::time::sleep(Duration::from_millis(10)) => {
-                    if let Err(e) = self.send_queued_messages(&mut socket, &agent_id).await {
-                        error!("Error sending queued messages: {}", e);
-                    }
-                }
-            }
-        }
-        
-        // Cleanup on disconnect
-        self.unregister_connection(&agent_id).await;
-        Ok(())
-    }
-    
-    async fn handle_technician_websocket(&self, mut socket: WebSocket, user_id: String) -> Result<()> {
-        // Register technician connection
-        self.register_connection(&user_id, "technician").await?;
-        
-        // Subscribe to session updates
-        let mut broadcast_rx = self.broadcast_tx.subscribe();
-        
-        // Message handling loop
-        loop {
-            tokio::select! {
-                // Handle incoming messages from technician
-                msg = socket.recv() => {
-                    match msg {
-                        Some(Ok(msg)) => {
-                            if let Err(e) = self.handle_technician_message(&user_id, msg).await {
-                                error!("Error handling technician message: {}", e);
-                            }
-                        }
-                        Some(Err(e)) => {
-                            error!("WebSocket error from technician {}: {}", user_id, e);
-                            break;
-                        }
-                        None => {
-                            info!("Technician {} disconnected", user_id);
-                            break;
-                        }
-                    }
-                }
-                
-                // Forward broadcast messages to technician
-                broadcast_msg = broadcast_rx.recv() => {
-                    match broadcast_msg {
-                        Ok(relay_msg) => {
-                            if let Err(e) = self.forward_to_technician(&mut socket, &user_id, relay_msg).await {
-                                debug!("Error forwarding to technician: {}", e);
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Broadcast channel error: {}", e);
-                        }
-                    }
-                }
-                
-                // Send queued messages
-                _ = tokio::time::sleep(Duration::from_millis(10)) => {
-                    if let Err(e) = self.send_queued_messages(&mut socket, &user_id).await {
-                        error!("Error sending queued messages: {}", e);
-                    }
-                }
-            }
-        }
-        
-        // Cleanup on disconnect
-        self.unregister_connection(&user_id).await;
-        Ok(())
-    }
-    
-    async fn register_connection(&self, id: &str, connection_type: &str) -> Result<()> {
-        let mut connections = self.connections.write().await;
-        connections.insert(id.to_string(), ActiveConnection {
-            websocket: None,
-            user_id: id.to_string(),
-            connection_type: connection_type.to_string(),
-            last_activity: Instant::now(),
-            message_queue: Vec::new(),
-            quality_stats: ConnectionStats {
-                latency_ms: 0,
-                bandwidth_kbps: 0,
-                packet_loss: 0.0,
-                jitter_ms: 0,
-                quality_score: 1.0,
-            },
-        });
-        
-        info!("Registered {} connection: {}", connection_type, id);
-        Ok(())
-    }
-    
-    async fn unregister_connection(&self, id: &str) {
-        let mut connections = self.connections.write().await;
-        connections.remove(id);
-        info!("Unregistered connection: {}", id);
-    }
-    
-    async fn handle_agent_message(&self, agent_id: &str, message: axum::extract::ws::Message) -> Result<()> {
-        // TODO: Parse and route agent messages
-        debug!("Received message from agent {}", agent_id);
-        Ok(())
-    }
-    
-    async fn handle_technician_message(&self, user_id: &str, message: axum::extract::ws::Message) -> Result<()> {
-        // TODO: Parse and route technician messages
-        debug!("Received message from technician {}", user_id);
-        Ok(())
-    }
-    
-    async fn send_queued_messages(&self, socket: &mut WebSocket, id: &str) -> Result<()> {
-        // TODO: Send queued messages with priority handling
-        Ok(())
-    }
-    
-    async fn forward_to_technician(&self, socket: &mut WebSocket, user_id: &str, message: RelayMessage) -> Result<()> {
-        // TODO: Forward relay messages to technician
-        Ok(())
-    }
-    
-    async fn start_quality_monitoring(&self, connection_id: &str) {
-        // TODO: Start background quality monitoring
-        debug!("Started quality monitoring for {}", connection_id);
-    }
-    
-    /// Create optimal session route (10x better than RustDesk's basic approach)
-    pub async fn create_optimal_route(&self, session_id: String, agent_id: String, technician_id: String) -> Result<SessionRoute> {
-        // 1. Analyze network topology
-        let agent_location = self.get_connection_location(&agent_id).await?;
-        let technician_location = self.get_connection_location(&technician_id).await?;
-        
-        // 2. Test P2P connectivity
-        let p2p_viable = self.test_p2p_connectivity(&agent_id, &technician_id).await;
-        
-        // 3. Select optimal relay node if needed
-        let relay_node = if p2p_viable {
-            None
-        } else {
-            Some(self.load_balancer.select_optimal_relay(&agent_location, &technician_location).await?)
-        };
-        
-        // 4. Determine connection type
-        let connection_type = if p2p_viable {
-            ConnectionType::Direct
-        } else if relay_node.is_some() {
-            ConnectionType::Hybrid // Try both TCP and UDP
-        } else {
-            ConnectionType::RelayedTcp
-        };
-        
+
+    /// Create an optimal route for a session
+    pub async fn create_route(
+        &self,
+        session_id: String,
+        agent_id: String,
+        technician_id: String,
+    ) -> Result<SessionRoute> {
+        // For now, create a direct relay route
+        // TODO: Implement P2P detection and optimal relay selection
         let route = SessionRoute {
             session_id: session_id.clone(),
             agent_id,
             technician_id,
-            relay_node,
-            connection_type,
-            created_at: Instant::now(),
-            last_activity: Instant::now(),
+            relay_node: None, // Direct through server
+            connection_type: ConnectionType::RelayedTcp,
+            created_at: Utc::now(),
+            last_activity: Utc::now(),
         };
-        
-        // Store route
+
         let mut sessions = self.sessions.write().await;
         sessions.insert(session_id, route.clone());
-        
-        info!("Created optimal route: {:?}", route);
+
         Ok(route)
     }
-    
-    async fn get_connection_location(&self, connection_id: &str) -> Result<GeoLocation> {
-        // TODO: Get geographic location of connection
-        Ok(GeoLocation {
-            latitude: 0.0,
-            longitude: 0.0,
-            country: "Unknown".to_string(),
-            region: "Unknown".to_string(),
-        })
+
+    /// Get session route
+    pub async fn get_route(&self, session_id: &str) -> Option<SessionRoute> {
+        let sessions = self.sessions.read().await;
+        sessions.get(session_id).cloned()
     }
-    
-    async fn test_p2p_connectivity(&self, agent_id: &str, technician_id: &str) -> bool {
-        // TODO: Test if P2P connection is possible
-        // This is 10x better than RustDesk because we test before attempting
-        debug!("Testing P2P connectivity between {} and {}", agent_id, technician_id);
-        false // For now, assume relay is needed
+
+    /// Remove session route
+    pub async fn remove_route(&self, session_id: &str) {
+        let mut sessions = self.sessions.write().await;
+        sessions.remove(session_id);
     }
-    
-    // API endpoints
-    async fn list_sessions(State(relay): State<Arc<Self>>) -> Result<axum::Json<Vec<SessionRoute>>, axum::http::StatusCode> {
-        let sessions = relay.sessions.read().await;
-        let routes: Vec<SessionRoute> = sessions.values().cloned().collect();
-        Ok(axum::Json(routes))
+
+    /// Get all active sessions
+    pub async fn get_all_sessions(&self) -> Vec<SessionRoute> {
+        let sessions = self.sessions.read().await;
+        sessions.values().cloned().collect()
     }
-    
-    async fn create_session_route(
-        Path(session_id): Path<String>,
-        State(relay): State<Arc<Self>>,
-    ) -> Result<axum::Json<SessionRoute>, axum::http::StatusCode> {
-        // TODO: Extract agent_id and technician_id from request
-        let agent_id = "test_agent".to_string();
-        let technician_id = "test_tech".to_string();
-        
-        match relay.create_optimal_route(session_id, agent_id, technician_id).await {
-            Ok(route) => Ok(axum::Json(route)),
-            Err(_) => Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR),
-        }
+
+    /// Register a relay node
+    pub async fn register_relay_node(&self, node: RelayNode) {
+        let mut nodes = self.relay_nodes.write().await;
+        nodes.insert(node.id, node);
     }
-    
-    async fn list_relay_nodes(State(relay): State<Arc<Self>>) -> axum::Json<Vec<RelayNode>> {
-        let nodes = relay.relay_nodes.read().await;
-        let node_list: Vec<RelayNode> = nodes.values().cloned().collect();
-        axum::Json(node_list)
-    }
-    
-    async fn health_check() -> axum::Json<serde_json::Value> {
-        axum::Json(serde_json::json!({
-            "status": "healthy",
-            "timestamp": chrono::Utc::now(),
-            "version": env!("CARGO_PKG_VERSION")
-        }))
+
+    /// Get relay node stats
+    pub async fn get_relay_stats(&self) -> HashMap<Uuid, RelayNode> {
+        let nodes = self.relay_nodes.read().await;
+        nodes.clone()
     }
 }
 
-#[derive(Debug, Clone)]
-struct GeoLocation {
-    latitude: f64,
-    longitude: f64,
-    country: String,
-    region: String,
+impl Default for RelayManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }

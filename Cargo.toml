@@ -3,8 +3,8 @@ members = ["server", "client"]
 resolver = "2"
 
 [workspace.package]
-edition = "2024"
-rust-version = "1.82"
+edition = "2021"
+rust-version = "1.75"
 
 [workspace.dependencies]
 # Frontend framework

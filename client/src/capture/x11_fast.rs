@@ -2,15 +2,14 @@ use async_trait::async_trait;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 use x11rb::connection::Connection;
 use x11rb::protocol::damage::{self, ConnectionExt as DamageExt};
-use x11rb::protocol::shm::{self, ConnectionExt as ShmExt};
-use x11rb::protocol::xfixes::{self, ConnectionExt as XfixesExt};
+use x11rb::protocol::shm::ConnectionExt as ShmExt;
+use x11rb::protocol::xfixes::ConnectionExt as XfixesExt;
 use x11rb::protocol::xproto::{self, ConnectionExt as _};
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
-use x11rb::{COPY_DEPTH_FROM_PARENT, CURRENT_TIME};
 
 use crate::capture::{DisplayInfo, Frame, PixelFormat, ScreenCapturer};
 use crate::error::{CaptureError, GhostLinkError, Result};
@@ -265,7 +264,7 @@ impl X11FastCapturer {
             
             // Update the frame buffer with the damaged region
             let bytes_per_pixel = 4;
-            let stride = self.width * bytes_per_pixel;
+            let _stride = self.width * bytes_per_pixel;
             
             for row in 0..height as usize {
                 let src_offset = row * (width as usize) * bytes_per_pixel as usize;
@@ -331,7 +330,7 @@ impl ScreenCapturer for X11FastCapturer {
         // Enforce frame rate limit for consistent 60fps
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_frame_time);
-        if elapsed.as_nanos() < FRAME_TIME_NS {
+        if elapsed.as_nanos() < FRAME_TIME_NS as u128 {
             // Sleep for remaining time to maintain 60fps
             tokio::time::sleep(Duration::from_nanos(FRAME_TIME_NS - elapsed.as_nanos() as u64)).await;
         }
@@ -357,7 +356,7 @@ impl ScreenCapturer for X11FastCapturer {
             
             // Clear damage
             if let Some(damage_id) = self.damage {
-                let _ = self.connection.damage_subtract(damage_id, 0, 0);
+                let _ = self.connection.damage_subtract(damage_id, 0u32, 0u32);
             }
         } else {
             // No damage tracking, capture full frame
@@ -379,7 +378,10 @@ impl ScreenCapturer for X11FastCapturer {
             height: self.height,
             pixel_format: PixelFormat::RGBA,
             stride: self.width * 4,
-            timestamp: now.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
         })
     }
     
@@ -411,7 +413,7 @@ impl ScreenCapturer for X11FastCapturer {
     }
     
     fn is_healthy(&self) -> bool {
-        self.is_initialized && self.connection.maximum_request_bytes() > 0
+        self.is_initialized && self.connection.setup().roots.len() > 0
     }
     
     async fn cleanup(&mut self) -> Result<()> {

@@ -1,7 +1,6 @@
 use crate::error::{GhostLinkError, Result};
 use serde::{Deserialize, Serialize};
-use std::io::{Cursor, Read, Write};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, trace};
 
 const FRAME_HEADER_MAGIC: u32 = 0x47464D45; // "GFME" - GhostLink Frame Message
 const PROTOCOL_VERSION: u16 = 1;
@@ -11,8 +10,10 @@ const PROTOCOL_VERSION: u16 = 1;
 pub enum VideoCodec {
     /// Raw uncompressed frame (fallback)
     Raw,
-    /// PNG compressed frame
+    /// PNG compressed frame (lossless)
     Png,
+    /// JPEG compressed frame (fast, lossy)
+    Jpeg,
     /// H.264 compressed frame
     H264,
     /// H.265/HEVC compressed frame
@@ -92,10 +93,10 @@ impl FrameHeader {
         is_keyframe: bool,
     ) -> Self {
         let mut flags = if is_keyframe { FLAG_KEYFRAME } else { FLAG_DELTA };
-        
+
         // Mark compressed codecs
         match codec {
-            VideoCodec::H264 | VideoCodec::H265 | 
+            VideoCodec::Jpeg | VideoCodec::H264 | VideoCodec::H265 |
             VideoCodec::NvencH264 | VideoCodec::NvencH265 | VideoCodec::NvencAV1 => {
                 flags |= FLAG_COMPRESSED;
             }
@@ -148,11 +149,12 @@ impl FrameHeader {
         match self.codec {
             0 => Ok(VideoCodec::Raw),
             1 => Ok(VideoCodec::Png),
-            2 => Ok(VideoCodec::H264),
-            3 => Ok(VideoCodec::H265),
-            4 => Ok(VideoCodec::NvencH264),
-            5 => Ok(VideoCodec::NvencH265),
-            6 => Ok(VideoCodec::NvencAV1),
+            2 => Ok(VideoCodec::Jpeg),
+            3 => Ok(VideoCodec::H264),
+            4 => Ok(VideoCodec::H265),
+            5 => Ok(VideoCodec::NvencH264),
+            6 => Ok(VideoCodec::NvencH265),
+            7 => Ok(VideoCodec::NvencAV1),
             _ => Err(GhostLinkError::Protocol(
                 format!("Unknown codec: {}", self.codec)
             )),

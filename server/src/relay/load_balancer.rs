@@ -1,3 +1,8 @@
+//! Load balancer for relay node selection and traffic distribution.
+//! This module provides ML-based load balancing with geographic awareness.
+#![allow(dead_code)]
+#![allow(private_interfaces)]
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -6,10 +11,19 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use uuid::Uuid;
 
-use super::{RelayNode, GeoLocation};
+use super::RelayNode;
+
+/// Geographic location for proximity-based routing
+#[derive(Debug, Clone)]
+pub struct GeoLocation {
+    pub latitude: f64,
+    pub longitude: f64,
+    pub country: String,
+    pub region: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoadBalancingStrategy {
@@ -173,7 +187,7 @@ impl LoadBalancer {
             self.calculate_distance(technician_location, &self.estimate_node_location(node))
         ) / 2.0;
         let geo_score = 1.0 / (1.0 + avg_distance / 1000.0); // Normalize distance
-        score += geo_score * 0.2;
+        score += (geo_score * 0.2) as f32;
         
         // 4. Historical performance
         if let Some(node_metrics) = metrics.get(&node.id) {

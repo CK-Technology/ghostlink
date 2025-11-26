@@ -37,6 +37,7 @@ image.workspace = true
 
 # Additional networking
 url = "2.0"
+reqwest = { version = "0.11", features = ["json", "multipart"] }
 
 # Async traits
 async-trait = "0.1"
@@ -44,10 +45,17 @@ async-trait = "0.1"
 # Configuration
 toml = "0.8"
 
-# High-performance screen capture and input dependencies  
+# High-performance screen capture and input dependencies
 x11rb = { version = "0.12", features = ["shm", "damage", "xfixes", "randr", "composite", "xtest"] }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.31", features = ["client", "unstable"] }
+
+# XDG Portal + PipeWire for Wayland-native capture
+dbus = { version = "0.9", features = ["vendored"] }
+gstreamer = "0.22"
+gstreamer-app = "0.22"
+gstreamer-video = "0.22"
+lazy_static = "1.4"
 
 # Frame protocol dependencies
 crc32fast = "1.4"
@@ -98,7 +106,7 @@ tempfile.workspace = true
 serial_test.workspace = true
 
 [features]
-default = ["x264-encoder", "nvenc"]
+default = []
 x11-legacy = ["dep:x11"]
 wayland-capture = []
 x264-encoder = ["dep:ffmpeg-next"]

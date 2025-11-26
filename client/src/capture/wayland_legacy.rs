@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 use std::process::Command;
 use crate::error::{Result, CaptureError, GhostLinkError};
 use super::{Frame, PixelFormat, ScreenCapturer};
@@ -278,16 +278,18 @@ impl ScreenCapturer for WaylandCapturer {
             }))?;
         
         let info = reader.info();
-        
+        // Calculate stride: width * bytes_per_pixel (4 for RGBA)
+        let stride = info.width * 4;
+
         Ok(Frame {
             data: buf,
             width: info.width,
             height: info.height,
-            stride: info.line_size as u32,
+            stride,
             pixel_format: PixelFormat::RGBA,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_millis() as u64,
         })
     }

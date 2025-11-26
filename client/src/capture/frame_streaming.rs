@@ -1,10 +1,12 @@
+#![allow(dead_code)]
+
 use crate::{
     capture::{
         frame_protocol::{FrameMessage, VideoCodec, QualityLevel, FrameStats},
         encoder_factory::{EncoderFactory, EncoderPreference},
-        VideoEncoderEnum, VideoEncoder, ScreenCapturerEnum, ScreenCapturer, Frame,
+        VideoEncoderEnum, VideoEncoder, ScreenCapturerEnum, Frame,
     },
-    connection::{RelayConnection, RelayMessage},
+    connection::RelayConnection,
     error::{GhostLinkError, Result},
 };
 
@@ -102,24 +104,12 @@ impl FrameStreamingService {
         *self.target_bitrate.write().await = bitrate;
         
         // Create best encoder for streaming
-        let preference = *self.encoder_preference.read().await;
+        let _preference = *self.encoder_preference.read().await;
         let mut encoder = EncoderFactory::create_streaming_encoder(bitrate, TARGET_FPS).await?;
-        
-        // Initialize encoder
-        if let VideoEncoderEnum::Software(ref mut sw_encoder) = &mut encoder {
-            sw_encoder.initialize(width, height, TARGET_FPS).await?;
-        } else if let VideoEncoderEnum::H264(ref mut h264_encoder) = &mut encoder {
-            h264_encoder.initialize(width, height, TARGET_FPS).await?;
-        } else if let VideoEncoderEnum::Hevc(ref mut hevc_encoder) = &mut encoder {
-            hevc_encoder.initialize(width, height, TARGET_FPS).await?;
-        } else if let VideoEncoderEnum::NvencH264(ref mut nvenc_encoder) = &mut encoder {
-            nvenc_encoder.initialize(width, height, TARGET_FPS).await?;
-        } else if let VideoEncoderEnum::NvencH265(ref mut nvenc_encoder) = &mut encoder {
-            nvenc_encoder.initialize(width, height, TARGET_FPS).await?;
-        } else if let VideoEncoderEnum::NvencAV1(ref mut nvenc_encoder) = &mut encoder {
-            nvenc_encoder.initialize(width, height, TARGET_FPS).await?;
-        }
-        
+
+        // Initialize encoder using the enum's initialize method
+        encoder.initialize(width, height, TARGET_FPS).await?;
+
         // Store encoder
         *self.encoder.write().await = Some(encoder);
         
@@ -166,15 +156,8 @@ impl FrameStreamingService {
         }
         
         // Cleanup encoder
-        if let Some(ref mut encoder) = *self.encoder.write().await {
-            match encoder {
-                VideoEncoderEnum::H264(ref mut enc) => { let _ = enc.cleanup().await; }
-                VideoEncoderEnum::Hevc(ref mut enc) => { let _ = enc.cleanup().await; }
-                VideoEncoderEnum::NvencH264(ref mut enc) => { let _ = enc.cleanup().await; }
-                VideoEncoderEnum::NvencH265(ref mut enc) => { let _ = enc.cleanup().await; }
-                VideoEncoderEnum::NvencAV1(ref mut enc) => { let _ = enc.cleanup().await; }
-                _ => {}
-            }
+        if let Some(encoder) = self.encoder.write().await.as_mut() {
+            let _ = encoder.cleanup().await;
         }
         
         info!("Frame streaming stopped");
@@ -286,8 +269,8 @@ impl FrameStreamingService {
                 stats.write().record_sent(&frame_info);
                 
                 let encode_time = start_time.elapsed();
-                if encode_time.as_millis() > FRAME_TIME_MS {
-                    debug!("Frame processing took {}ms (target: {}ms)", 
+                if encode_time.as_millis() > FRAME_TIME_MS as u128 {
+                    debug!("Frame processing took {}ms (target: {}ms)",
                         encode_time.as_millis(), FRAME_TIME_MS);
                 }
                 
@@ -304,47 +287,16 @@ impl FrameStreamingService {
     /// Capture a frame from the screen capturer
     async fn capture_frame(capturer: &Arc<Mutex<ScreenCapturerEnum>>) -> Result<Frame> {
         let mut capturer_guard = capturer.lock().await;
-        
-        match capturer_guard.as_mut() {
-            ScreenCapturerEnum::X11Fast(ref mut capturer) => {
-                capturer.capture_frame().await
-            }
-            ScreenCapturerEnum::WaylandFast(ref mut capturer) => {
-                capturer.capture_frame().await
-            }
-            #[cfg(target_os = "linux")]
-            ScreenCapturerEnum::X11(ref mut capturer) => {
-                capturer.capture_frame().await
-            }
-            #[cfg(target_os = "linux")]
-            ScreenCapturerEnum::Wayland(ref mut capturer) => {
-                capturer.capture_frame().await
-            }
-            #[cfg(target_os = "windows")]
-            ScreenCapturerEnum::Windows(ref mut capturer) => {
-                capturer.capture_frame().await
-            }
-            #[cfg(target_os = "macos")]
-            ScreenCapturerEnum::MacOS(ref mut capturer) => {
-                capturer.capture_frame().await
-            }
-        }
+        capturer_guard.capture_frame().await
     }
     
     /// Encode a frame with the current encoder
     async fn encode_frame(encoder: &Arc<RwLock<Option<VideoEncoderEnum>>>, frame: &Frame) -> Result<Vec<u8>> {
-        let encoder_guard = encoder.read().await;
-        let encoder = encoder_guard.as_ref()
+        let mut encoder_guard = encoder.write().await;
+        let encoder = encoder_guard.as_mut()
             .ok_or_else(|| GhostLinkError::Other("No encoder initialized".to_string()))?;
-        
-        match encoder {
-            VideoEncoderEnum::Software(ref enc) => enc.encode_frame(frame).await,
-            VideoEncoderEnum::H264(ref enc) => enc.encode_frame(frame).await,
-            VideoEncoderEnum::Hevc(ref enc) => enc.encode_frame(frame).await,
-            VideoEncoderEnum::NvencH264(ref enc) => enc.encode_frame(frame).await,
-            VideoEncoderEnum::NvencH265(ref enc) => enc.encode_frame(frame).await,
-            VideoEncoderEnum::NvencAV1(ref enc) => enc.encode_frame(frame).await,
-        }
+
+        encoder.encode_frame(frame).await
     }
     
     /// Detect codec from encoder type
@@ -352,12 +304,20 @@ impl FrameStreamingService {
         let encoder_guard = encoder.read().await;
         if let Some(ref encoder) = *encoder_guard {
             match encoder {
-                VideoEncoderEnum::Software(_) => VideoCodec::Png,
+                // Software encoder uses JPEG by default for real-time streaming
+                VideoEncoderEnum::Software(_) => VideoCodec::Jpeg,
                 VideoEncoderEnum::H264(_) => VideoCodec::H264,
                 VideoEncoderEnum::Hevc(_) => VideoCodec::H265,
+                #[cfg(feature = "nvenc")]
                 VideoEncoderEnum::NvencH264(_) => VideoCodec::NvencH264,
+                #[cfg(feature = "nvenc")]
                 VideoEncoderEnum::NvencH265(_) => VideoCodec::NvencH265,
+                #[cfg(feature = "nvenc")]
                 VideoEncoderEnum::NvencAV1(_) => VideoCodec::NvencAV1,
+                #[cfg(feature = "qsv")]
+                VideoEncoderEnum::Qsv(_) => VideoCodec::H264,
+                #[cfg(feature = "videotoolbox")]
+                VideoEncoderEnum::VideoToolbox(_) => VideoCodec::H264,
             }
         } else {
             VideoCodec::Raw
@@ -368,8 +328,9 @@ impl FrameStreamingService {
     async fn update_frame_size_history(recent_sizes: &Arc<Mutex<Vec<usize>>>, size: usize) {
         let mut sizes = recent_sizes.lock().await;
         sizes.push(size);
-        if sizes.len() > ADAPTIVE_QUALITY_WINDOW {
-            sizes.drain(0..sizes.len() - ADAPTIVE_QUALITY_WINDOW);
+        let len = sizes.len();
+        if len > ADAPTIVE_QUALITY_WINDOW {
+            sizes.drain(0..len - ADAPTIVE_QUALITY_WINDOW);
         }
     }
     
@@ -416,16 +377,7 @@ impl FrameStreamingService {
     /// Get current encoder information
     async fn get_encoder_info(&self) -> Option<String> {
         let encoder_guard = self.encoder.read().await;
-        encoder_guard.as_ref().map(|encoder| {
-            match encoder {
-                VideoEncoderEnum::Software(ref enc) => enc.get_encoder_info().name,
-                VideoEncoderEnum::H264(ref enc) => enc.get_encoder_info().name,
-                VideoEncoderEnum::Hevc(ref enc) => enc.get_encoder_info().name,
-                VideoEncoderEnum::NvencH264(ref enc) => enc.get_encoder_info().name,
-                VideoEncoderEnum::NvencH265(ref enc) => enc.get_encoder_info().name,
-                VideoEncoderEnum::NvencAV1(ref enc) => enc.get_encoder_info().name,
-            }
-        })
+        encoder_guard.as_ref().map(|encoder| encoder.get_encoder_info().name)
     }
     
     /// Get streaming statistics

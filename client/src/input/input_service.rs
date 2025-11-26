@@ -1,7 +1,7 @@
 use crate::{
     error::{GhostLinkError, Result},
     input::{
-        input_protocol::{InputEvent, InputStats, KeyType, MouseButtonType, ScrollDirectionType},
+        input_protocol::{InputEvent, InputStats, KeyType},
         x11_input::X11InputInjector,
     },
     connection::RelayConnection,
@@ -14,7 +14,6 @@ use std::{
 use tokio::{
     sync::{RwLock, mpsc},
     task::JoinHandle,
-    time::sleep,
 };
 use tracing::{debug, error, info, trace, warn};
 use parking_lot::RwLock as ParkingRwLock;

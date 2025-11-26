@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use tracing::{debug, error, info, warn};
+use tracing::info;
 use crate::error::{Result, CaptureError, GhostLinkError};
 use super::{Frame, PixelFormat, ScreenCapturer, DisplayInfo};
 

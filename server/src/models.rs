@@ -94,12 +94,28 @@ pub enum SessionType {
     Backstage,
     Adhoc,
     FileTransfer,
+    Control,
+    View,
+}
+
+impl std::fmt::Display for SessionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SessionType::Console => write!(f, "console"),
+            SessionType::Backstage => write!(f, "backstage"),
+            SessionType::Adhoc => write!(f, "adhoc"),
+            SessionType::FileTransfer => write!(f, "file_transfer"),
+            SessionType::Control => write!(f, "control"),
+            SessionType::View => write!(f, "view"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[sqlx(type_name = "VARCHAR", rename_all = "lowercase")]
 pub enum SessionStatus {
     Pending,
+    Connecting,
     Active,
     Ended,
     Failed,

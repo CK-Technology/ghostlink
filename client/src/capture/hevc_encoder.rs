@@ -1,8 +1,9 @@
+#![allow(dead_code)]
+
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 #[cfg(feature = "x264-encoder")]
 use ffmpeg_next as ffmpeg;
@@ -186,21 +187,21 @@ impl HevcEncoder {
     fn encode_frame_fallback(&mut self, frame: &Frame) -> Result<Vec<u8>> {
         // Use PNG as fallback
         use std::io::Cursor;
-        
+
         let mut png_data = Vec::new();
         {
             let mut cursor = Cursor::new(&mut png_data);
-            let encoder = png::Encoder::new(&mut cursor, frame.width, frame.height);
-            let mut encoder = encoder.into_writer()
+            let mut encoder = png::Encoder::new(&mut cursor, frame.width, frame.height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+
+            let mut writer = encoder.write_header()
                 .map_err(|e| GhostLinkError::Other(format!("PNG encoder creation failed: {}", e)))?;
-            
-            encoder.write_image_data(&frame.data)
+
+            writer.write_image_data(&frame.data)
                 .map_err(|e| GhostLinkError::Other(format!("PNG encoding failed: {}", e)))?;
-            
-            encoder.finish()
-                .map_err(|e| GhostLinkError::Other(format!("PNG finalization failed: {}", e)))?;
         }
-        
+
         debug!("PNG encoded frame {} -> {} bytes", self.frame_count, png_data.len());
         Ok(png_data)
     }
@@ -289,11 +290,11 @@ impl VideoEncoder for HevcEncoder {
 
     async fn cleanup(&mut self) -> Result<()> {
         info!("Cleaning up H.265/HEVC encoder");
-        
-        if let Some(context_arc) = self.encoder_context.take() {
+
+        if let Some(_context_arc) = self.encoder_context.take() {
             #[cfg(feature = "x264-encoder")]
             {
-                let mut context = context_arc.lock();
+                let mut context = _context_arc.lock();
                 if let Err(e) = context.ffmpeg_context.send_eof() {
                     warn!("Failed to flush HEVC encoder: {}", e);
                 }

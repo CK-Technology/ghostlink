@@ -144,7 +144,7 @@ impl MonitorProtocolHandler {
         message: MonitorControlMessage,
         monitor_manager: &crate::capture::monitor_manager::MonitorManager,
     ) -> Result<Option<MonitorControlMessage>, crate::error::GhostLinkError> {
-        use crate::error::GhostLinkError;
+        
         
         match message {
             MonitorControlMessage::GetMonitors => {
@@ -342,7 +342,7 @@ impl MonitorProtocolHandler {
         let web_monitors: HashMap<u32, MonitorInfo> = monitors
             .into_iter()
             .map(|(id, monitor)| {
-                let selected = !selection.capture_all_monitors && selection.monitor_id == id;
+                let _selected = !selection.capture_all_monitors && selection.monitor_id == id;
                 (id, monitor)
             })
             .collect();

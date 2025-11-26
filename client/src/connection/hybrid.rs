@@ -4,8 +4,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::{Duration, timeout};
-use tracing::{debug, info, warn, error};
-use uuid::Uuid;
+use tracing::{debug, info, warn};
 
 use super::{RelayConnection, RelayMessage, P2PManager, P2PConnectionInfo};
 
@@ -187,7 +186,7 @@ impl HybridConnectionManager {
     }
     
     async fn ensure_relay_connection(&self) -> Result<()> {
-        let mut relay_guard = self.relay_connection.lock().await;
+        let relay_guard = self.relay_connection.lock().await;
         
         if relay_guard.is_none() {
             // Create relay connection using existing RelayConnection
@@ -306,7 +305,7 @@ impl HybridConnectionManager {
     }
     
     /// Handle incoming P2P handshake from peer
-    pub async fn handle_p2p_handshake(&self, connection_info: P2PConnectionInfo) -> Result<()> {
+    pub async fn handle_p2p_handshake(&self, _connection_info: P2PConnectionInfo) -> Result<()> {
         info!("Received P2P handshake from peer");
         
         // Initialize our P2P manager if not already done

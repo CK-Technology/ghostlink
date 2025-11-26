@@ -1,13 +1,12 @@
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::capture::{
     VideoEncoderEnum, 
     h264_encoder::H264Encoder,
     hevc_encoder::HevcEncoder,
-    nvenc_encoder::{NvencEncoder, NvencCodec},
     encoding::SoftwareEncoder,
 };
-use crate::error::{GhostLinkError, Result};
+use crate::error::Result;
 
 /// Encoder preferences for different use cases
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,7 +87,7 @@ impl EncoderFactory {
     async fn create_balanced_encoder(
         has_nvidia: bool,
         has_ffmpeg: bool,
-        target_fps: u32,
+        _target_fps: u32,
     ) -> Result<VideoEncoderEnum> {
         // Priority: NVENC H.265 > H.265 Software > NVENC H.264 > H.264 Software
         
